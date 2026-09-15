@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Área do fotógrafo — Foto Facial Match</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <a href="/">Foto Facial Match</a>
+  <button id="logoutBtn" class="hidden" style="margin:0">Sair</button>
+</header>
+<main>
+
+  <section id="authSection" class="card">
+    <h1 id="authTitle">Entrar</h1>
+    <form id="loginForm">
+      <label for="loginEmail">E-mail</label>
+      <input id="loginEmail" type="email" required>
+      <label for="loginPassword">Senha</label>
+      <input id="loginPassword" type="password" required>
+      <button type="submit">Entrar</button>
+    </form>
+    <form id="registerForm" class="hidden">
+      <label for="regName">Nome</label>
+      <input id="regName" required>
+      <label for="regEmail">E-mail</label>
+      <input id="regEmail" type="email" required>
+      <label for="regPassword">Senha (mín. 8 caracteres)</label>
+      <input id="regPassword" type="password" minlength="8" required>
+      <button type="submit">Criar conta</button>
+    </form>
+    <button type="button" class="link" id="toggleAuth">Não tenho conta — cadastrar</button>
+    <p id="authMsg" class="msg"></p>
+  </section>
+
+  <section id="appSection" class="hidden">
+    <div class="card">
+      <h2>Enviar foto ou vídeo</h2>
+      <form id="uploadForm">
+        <label for="file">Arquivo (JPEG, PNG, WEBP, MP4, MOV)</label>
+        <input id="file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime" required>
+        <label for="eventName">Nome do evento</label>
+        <input id="eventName" placeholder="ex.: Casamento Ana & Léo">
+        <label for="price">Preço (R$)</label>
+        <input id="price" type="number" step="0.01" min="0" required>
+        <button type="submit" id="uploadBtn">Enviar</button>
+      </form>
+      <p id="uploadMsg" class="msg"></p>
+    </div>
+
+    <div class="card">
+      <div class="top-row"><h2>Meu catálogo</h2><button type="button" id="refreshBtn">Atualizar</button></div>
+      <div id="catalog" class="grid"></div>
+    </div>
+  </section>
+
+</main>
+<script src="/api.js"></script>
+<script>
+const authSection = document.getElementById('authSection');
+const appSection = document.getElementById('appSection');
+const logoutBtn = document.getElementById('logoutBtn');
+const authMsg = document.getElementById('authMsg');
+const loginForm = document.getElementById('loginForm');
+const registerForm = document.getElementById('registerForm');
+const toggleAuth = document.getElementById('toggleAuth');
+const authTitle = document.getElementById('authTitle');
+
+function showMsg(el, text, isError) {
+  el.textContent = text;
+  el.className = 'msg ' + (isError ? 'error' : 'ok');
+}
+
+function refreshAuthUI() {
+  const logged = !!getToken();
+  authSection.classList.toggle('hidden', logged);
+  appSection.classList.toggle('hidden', !logged);
+  logoutBtn.classList.toggle('hidden', !logged);
+  if (logged) loadCatalog();
+}
+
+toggleAuth.addEventListener('click', () => {
+  const showingLogin = !loginForm.classList.contains('hidden');
+  loginForm.classList.toggle('hidden', showingLogin);
+  registerForm.classList.toggle('hidden', !showingLogin);
+  authTitle.textContent = showingLogin ? 'Criar conta' : 'Entrar';
+  toggleAuth.textContent = showingLogin ? 'Já tenho conta — entrar' : 'Não tenho conta — cadastrar';
+  authMsg.textContent = '';
+});
+
+loginForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('loginEmail').value;
+  const password = document.getElementById('loginPassword').value;
+  try {
+    const data = await api('/api/auth/login', { method: 'POST', body: { email, password } });
+    setToken(data.token);
+    refreshAuthUI();
+  } catch (err) {
+    showMsg(authMsg, err.message, true);
+  }
+});
+
+registerForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = document.getElementById('regName').value;
+  const email = document.getElementById('regEmail').value;
+  const password = document.getElementById('regPassword').value;
+  try {
+    const data = await api('/api/auth/register', { method: 'POST', body: { name, email, password } });
+    setToken(data.token);
+    refreshAuthUI();
+  } catch (err) {
+    showMsg(authMsg, err.message, true);
+  }
+});
+
+logoutBtn.addEventListener('click', () => {
+  setToken(null);
+  refreshAuthUI();
+});
+
+const uploadForm = document.getElementById('uploadForm');
+const uploadMsg = document.getElementById('uploadMsg');
+const uploadBtn = document.getElementById('uploadBtn');
+
+uploadForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const file = document.getElementById('file').files[0];
+  const eventName = document.getElementById('eventName').value;
+  const priceReais = document.getElementById('price').value;
+  if (!file) return;
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('event_name', eventName);
+  fd.append('price_cents', String(Math.round(Number(priceReais) * 100)));
+
+  uploadBtn.disabled = true;
+  showMsg(uploadMsg, 'Enviando...', false);
+  try {
+    await api('/api/media', { method: 'POST', body: fd, auth: true });
+    showMsg(uploadMsg, 'Enviado com sucesso!', false);
+    uploadForm.reset();
+    loadCatalog();
+  } catch (err) {
+    showMsg(uploadMsg, err.message, true);
+  } finally {
+    uploadBtn.disabled = false;
+  }
+});
+
+document.getElementById('refreshBtn').addEventListener('click', loadCatalog);
+
+async function loadCatalog() {
+  const catalog = document.getElementById('catalog');
+  catalog.textContent = 'Carregando...';
+  try {
+    const items = await api('/api/media', { auth: true });
+    if (!items.length) {
+      catalog.innerHTML = '<p>Nenhuma mídia enviada ainda.</p>';
+      return;
+    }
+    catalog.innerHTML = items.map(renderCatalogItem).join('');
+  } catch (err) {
+    catalog.innerHTML = '<p class="msg error">' + err.message + '</p>';
+  }
+}
+
+function renderCatalogItem(item) {
+  const media = item.type === 'video'
+    ? `<video src="${item.url}" muted></video>`
+    : `<img src="${item.url}" alt="${item.event_name || 'mídia'}">`;
+  return `<div class="item">
+    ${media}
+    <div class="info">
+      <div>${item.event_name || '(sem evento)'}</div>
+      <div class="price">R$ ${(item.price_cents / 100).toFixed(2)}</div>
+      <div class="status">status rosto: ${item.face_status}</div>
+    </div>
+  </div>`;
+}
+
+refreshAuthUI();
+</script>
+</body>
+</html>

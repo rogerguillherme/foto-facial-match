@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encontre suas fotos — Foto Facial Match</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header><a href="/">Foto Facial Match</a></header>
+<main>
+  <div class="card">
+    <h1>Envie uma selfie para encontrar suas fotos</h1>
+    <form id="selfieForm">
+      <label for="selfie">Selfie (JPEG, PNG ou WEBP)</label>
+      <input id="selfie" type="file" accept="image/jpeg,image/png,image/webp" required>
+      <button type="submit" id="searchBtn">Buscar minhas fotos</button>
+    </form>
+    <p id="searchMsg" class="msg"></p>
+  </div>
+
+  <div class="card hidden" id="resultsCard">
+    <h2>Encontramos isso:</h2>
+    <div id="results" class="grid"></div>
+  </div>
+</main>
+<script src="/api.js"></script>
+<script>
+const selfieForm = document.getElementById('selfieForm');
+const searchMsg = document.getElementById('searchMsg');
+const searchBtn = document.getElementById('searchBtn');
+const resultsCard = document.getElementById('resultsCard');
+const resultsEl = document.getElementById('results');
+
+function showMsg(el, text, isError) {
+  el.textContent = text;
+  el.className = 'msg ' + (isError ? 'error' : 'ok');
+}
+
+selfieForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const file = document.getElementById('selfie').files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('selfie', file);
+
+  searchBtn.disabled = true;
+  showMsg(searchMsg, 'Buscando...', false);
+  resultsCard.classList.add('hidden');
+  try {
+    const data = await api('/api/match', { method: 'POST', body: fd });
+    showMsg(searchMsg, `Busca #${data.search_id} concluída.`, false);
+    renderResults(data.results);
+  } catch (err) {
+    showMsg(searchMsg, err.message, true);
+  } finally {
+    searchBtn.disabled = false;
+  }
+});
+
+function renderResults(results) {
+  resultsCard.classList.remove('hidden');
+  if (!results.length) {
+    resultsEl.innerHTML = '<p>Nenhuma foto sua encontrada no catálogo ainda.</p>';
+    return;
+  }
+  resultsEl.innerHTML = results.map(renderResultItem).join('');
+  resultsEl.querySelectorAll('button[data-media-id]').forEach((btn) => {
+    btn.addEventListener('click', () => buy(btn.dataset.mediaId, btn));
+  });
+}
+
+function renderResultItem(r) {
+  const media = r.type === 'video'
+    ? `<video src="${r.url}" muted controls></video>`
+    : `<img src="${r.url}" alt="${r.event_name || 'foto'}">`;
+  return `<div class="item">
+    ${media}
+    <div class="info">
+      <div>${r.event_name || '(sem evento)'}</div>
+      <div class="price">R$ ${(r.price_cents / 100).toFixed(2)}</div>
+      <div class="status">similaridade: ${r.similarity}%</div>
+      <button data-media-id="${r.media_id}">Comprar</button>
+    </div>
+  </div>`;
+}
+
+async function buy(mediaId, btn) {
+  const email = prompt('Seu e-mail para receber a compra:');
+  if (!email) return;
+  btn.disabled = true;
+  btn.textContent = 'Processando...';
+  try {
+    const order = await api('/api/orders', { method: 'POST', body: { media_id: Number(mediaId), buyer_email: email } });
+    btn.textContent = 'Comprado! (pedido #' + order.order_id + ')';
+  } catch (err) {
+    alert(err.message);
+    btn.disabled = false;
+    btn.textContent = 'Comprar';
+  }
+}
+</script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('node:path');
 const config = require('./config');
 const authRoutes = require('./routes/auth');
 const mediaRoutes = require('./routes/media');
@@ -9,6 +10,7 @@ const app = express();
 
 app.use(express.json());
 app.use('/files', express.static(config.uploadsDir));
+app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
