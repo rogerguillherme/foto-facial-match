@@ -1,0 +1,23 @@
+{
+  "name": "foto-facial-match",
+  "version": "1.0.0",
+  "description": "Backend: fotografo sobe fotos/videos, cliente envia selfie e o sistema acha as midias em que ele aparece via reconhecimento facial.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-rekognition": "^3.658.0",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.4.0"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
