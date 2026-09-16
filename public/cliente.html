@@ -65,8 +65,8 @@ function renderResults(results) {
     return;
   }
   resultsEl.innerHTML = results.map(renderResultItem).join('');
-  resultsEl.querySelectorAll('button[data-media-id]').forEach((btn) => {
-    btn.addEventListener('click', () => buy(btn.dataset.mediaId, btn));
+  resultsEl.querySelectorAll('.item').forEach((itemEl) => {
+    renderBuyButton(itemEl.dataset.mediaId, itemEl.querySelector('.purchase-area'));
   });
 }
 
@@ -74,30 +74,97 @@ function renderResultItem(r) {
   const media = r.type === 'video'
     ? `<video src="${r.url}" muted controls></video>`
     : `<img src="${r.url}" alt="${r.event_name || 'foto'}">`;
-  return `<div class="item">
+  return `<div class="item" data-media-id="${r.media_id}">
     ${media}
     <div class="info">
       <div>${r.event_name || '(sem evento)'}</div>
       <div class="price">R$ ${(r.price_cents / 100).toFixed(2)}</div>
       <div class="status">similaridade: ${r.similarity}%</div>
-      <button data-media-id="${r.media_id}">Comprar</button>
+      <div class="purchase-area"></div>
     </div>
   </div>`;
 }
 
-async function buy(mediaId, btn) {
-  const email = prompt('Seu e-mail para receber a compra:');
-  if (!email) return;
-  btn.disabled = true;
-  btn.textContent = 'Processando...';
-  try {
-    const order = await api('/api/orders', { method: 'POST', body: { media_id: Number(mediaId), buyer_email: email } });
-    btn.textContent = 'Comprado! (pedido #' + order.order_id + ')';
-  } catch (err) {
-    alert(err.message);
-    btn.disabled = false;
-    btn.textContent = 'Comprar';
-  }
+// Fluxo de compra em 3 passos, tudo dentro do próprio card do resultado:
+// 1) nome+telefone -> 2) Pix copia-e-cola/QR + upload de comprovante -> 3) liberado.
+function renderBuyButton(mediaId, container) {
+  container.innerHTML = '<button type="button" class="buy-btn">Comprar</button>';
+  container.querySelector('.buy-btn').addEventListener('click', () => renderBuyForm(mediaId, container));
+}
+
+function renderBuyForm(mediaId, container) {
+  container.innerHTML = `
+    <form class="buy-form">
+      <label>Nome</label>
+      <input type="text" class="buyer-name" required>
+      <label>Telefone</label>
+      <input type="tel" class="buyer-phone" placeholder="(11) 99999-9999" required>
+      <button type="submit">Gerar Pix</button>
+    </form>
+    <p class="msg"></p>`;
+  const form = container.querySelector('.buy-form');
+  const msg = container.querySelector('.msg');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const buyer_name = container.querySelector('.buyer-name').value.trim();
+    const buyer_phone = container.querySelector('.buyer-phone').value.trim();
+    const submitBtn = form.querySelector('button');
+    submitBtn.disabled = true;
+    showMsg(msg, 'Gerando Pix...', false);
+    try {
+      const order = await api('/api/orders', {
+        method: 'POST',
+        body: { media_id: Number(mediaId), buyer_name, buyer_phone },
+      });
+      renderPixStep(order, container);
+    } catch (err) {
+      showMsg(msg, err.message, true);
+      submitBtn.disabled = false;
+    }
+  });
+}
+
+function renderPixStep(order, container) {
+  container.innerHTML = `
+    <div class="pix-box">
+      <p>Pague <strong>R$ ${(order.amount_cents / 100).toFixed(2)}</strong> com o Pix copia-e-cola abaixo:</p>
+      ${order.qr_code_data_url ? `<img class="pix-qr" src="${order.qr_code_data_url}" alt="QR code Pix">` : ''}
+      <textarea class="pix-code" readonly rows="3">${order.pix_code}</textarea>
+      <button type="button" class="copy-btn link">Copiar código</button>
+      <label>Comprovante do Pix (imagem ou PDF)</label>
+      <input type="file" class="proof-file" accept="image/jpeg,image/png,image/webp,application/pdf" required>
+      <button type="button" class="confirm-btn">Já paguei, enviar comprovante</button>
+      <p class="msg"></p>
+    </div>`;
+  container.querySelector('.copy-btn').addEventListener('click', () => {
+    navigator.clipboard?.writeText(order.pix_code).catch(() => {});
+  });
+  const confirmBtn = container.querySelector('.confirm-btn');
+  const msg = container.querySelector('.msg');
+  confirmBtn.addEventListener('click', async () => {
+    const file = container.querySelector('.proof-file').files[0];
+    if (!file) {
+      showMsg(msg, 'Selecione o arquivo do comprovante.', true);
+      return;
+    }
+    const fd = new FormData();
+    fd.append('proof', file);
+    confirmBtn.disabled = true;
+    showMsg(msg, 'Enviando comprovante...', false);
+    try {
+      const updated = await api(`/api/orders/${order.order_id}/proof`, { method: 'POST', body: fd });
+      renderPaidStep(updated, container);
+    } catch (err) {
+      showMsg(msg, err.message, true);
+      confirmBtn.disabled = false;
+    }
+  });
+}
+
+function renderPaidStep(order, container) {
+  container.innerHTML = `
+    <p class="msg ok">Pagamento confirmado! Pedido liberado.</p>
+    <a class="download-link" href="${order.download_url}" download target="_blank" rel="noopener">Baixar mídia</a>`;
 }
 </script>
 </body>

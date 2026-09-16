@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
 const config = require('../config');
+const { requirePhotographer } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -51,6 +52,30 @@ router.post('/login', (req, res) => {
 
   const token = jwt.sign({ photographerId: photographer.id }, config.jwtSecret, { expiresIn: '30d' });
   res.json({ token, photographer: { id: photographer.id, name: photographer.name, email: photographer.email } });
+});
+
+// Dados do próprio fotógrafo logado (usado pela tela de configurações pra
+// mostrar a chave Pix já cadastrada).
+router.get('/me', requirePhotographer, (req, res) => {
+  const photographer = db
+    .prepare('SELECT id, name, email, pix_key FROM photographers WHERE id = ?')
+    .get(req.photographerId);
+  if (!photographer) {
+    return res.status(404).json({ error: 'Fotógrafo não encontrado.' });
+  }
+  res.json(photographer);
+});
+
+// Cadastra/edita a chave Pix fixa do fotógrafo. É essa chave que entra no
+// Pix copia-e-cola gerado pra cada pedido.
+router.put('/pix-key', requirePhotographer, (req, res) => {
+  const pixKey = typeof req.body?.pix_key === 'string' ? req.body.pix_key.trim() : '';
+  if (!pixKey || pixKey.length > 77) {
+    return res.status(400).json({ error: 'pix_key é obrigatória (texto de até 77 caracteres).' });
+  }
+
+  db.prepare('UPDATE photographers SET pix_key = ? WHERE id = ?').run(pixKey, req.photographerId);
+  res.json({ pix_key: pixKey });
 });
 
 module.exports = router;

@@ -81,3 +81,19 @@ button.link {
 .hidden { display: none !important; }
 .top-row { display: flex; justify-content: space-between; align-items: center; }
 .top-row button { margin: 0; }
+.purchase-area { margin-top: .5rem; }
+.purchase-area button { width: 100%; margin-top: .5rem; padding: .4rem; font-size: .85rem; }
+.pix-qr { display: block; width: 100%; max-width: 180px; margin: .5rem auto; }
+.pix-code { width: 100%; font-family: monospace; font-size: .7rem; resize: none; }
+.download-link {
+  display: block;
+  margin-top: .5rem;
+  padding: .4rem;
+  text-align: center;
+  background: #4f46e5;
+  color: #fff;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: .85rem;
+}

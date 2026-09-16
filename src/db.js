@@ -19,6 +19,7 @@ db.exec(`
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
+    pix_key TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -61,11 +62,30 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     media_id INTEGER NOT NULL REFERENCES media(id),
-    buyer_email TEXT NOT NULL,
+    buyer_name TEXT NOT NULL,
+    buyer_phone TEXT NOT NULL,
     amount_cents INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'stub_pending',
+    pix_code TEXT NOT NULL,
+    proof_path TEXT,
+    status TEXT NOT NULL DEFAULT 'awaiting_payment',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+// Migração leve pra bancos criados antes da chave Pix/fluxo de comprovante
+// existirem: sem framework de migration, só ALTER TABLE idempotente (ignora
+// "duplicate column" se a coluna já existe).
+function addColumnIfMissing(table, columnDef) {
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${columnDef}`);
+  } catch (e) {
+    if (!/duplicate column name/i.test(e.message)) throw e;
+  }
+}
+addColumnIfMissing('photographers', 'pix_key TEXT');
+addColumnIfMissing('orders', 'buyer_name TEXT');
+addColumnIfMissing('orders', 'buyer_phone TEXT');
+addColumnIfMissing('orders', 'pix_code TEXT');
+addColumnIfMissing('orders', 'proof_path TEXT');
 
 module.exports = db;

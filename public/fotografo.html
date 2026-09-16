@@ -37,6 +37,16 @@
 
   <section id="appSection" class="hidden">
     <div class="card">
+      <h2>Chave Pix (recebimento)</h2>
+      <form id="pixForm">
+        <label for="pixKey">Sua chave Pix</label>
+        <input id="pixKey" placeholder="e-mail, telefone, CPF/CNPJ ou chave aleatória">
+        <button type="submit">Salvar chave Pix</button>
+      </form>
+      <p id="pixMsg" class="msg"></p>
+    </div>
+
+    <div class="card">
       <h2>Enviar foto ou vídeo</h2>
       <form id="uploadForm">
         <label for="file">Arquivo (JPEG, PNG, WEBP, MP4, MOV)</label>
@@ -78,8 +88,34 @@ function refreshAuthUI() {
   authSection.classList.toggle('hidden', logged);
   appSection.classList.toggle('hidden', !logged);
   logoutBtn.classList.toggle('hidden', !logged);
-  if (logged) loadCatalog();
+  if (logged) {
+    loadCatalog();
+    loadPixKey();
+  }
 }
+
+const pixForm = document.getElementById('pixForm');
+const pixMsg = document.getElementById('pixMsg');
+const pixKeyInput = document.getElementById('pixKey');
+
+async function loadPixKey() {
+  try {
+    const me = await api('/api/auth/me', { auth: true });
+    pixKeyInput.value = me.pix_key || '';
+  } catch (err) {
+    showMsg(pixMsg, err.message, true);
+  }
+}
+
+pixForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api('/api/auth/pix-key', { method: 'PUT', body: { pix_key: pixKeyInput.value.trim() }, auth: true });
+    showMsg(pixMsg, 'Chave Pix salva!', false);
+  } catch (err) {
+    showMsg(pixMsg, err.message, true);
+  }
+});
 
 toggleAuth.addEventListener('click', () => {
   const showingLogin = !loginForm.classList.contains('hidden');

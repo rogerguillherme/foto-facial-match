@@ -39,7 +39,7 @@ function fakeJpeg(seed) {
   return buf;
 }
 
-test('fluxo completo: cadastro -> upload -> busca por selfie -> compra', async () => {
+test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> compra -> comprovante -> liberado', async () => {
   const email = `fotografo-${Date.now()}@teste.com`;
 
   const registerRes = await fetch(`${baseUrl}/api/auth/register`, {
@@ -50,6 +50,13 @@ test('fluxo completo: cadastro -> upload -> busca por selfie -> compra', async (
   assert.equal(registerRes.status, 201);
   const { token } = await registerRes.json();
   assert.ok(token);
+
+  const pixRes = await fetch(`${baseUrl}/api/auth/pix-key`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ pix_key: 'fotografo-teste@example.com' }),
+  });
+  assert.equal(pixRes.status, 200);
 
   const photoBytes = fakeJpeg(1);
   const uploadForm = new FormData();
@@ -85,12 +92,41 @@ test('fluxo completo: cadastro -> upload -> busca por selfie -> compra', async (
   const orderRes = await fetch(`${baseUrl}/api/orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ media_id: media.id, buyer_email: 'cliente@teste.com' }),
+    body: JSON.stringify({ media_id: media.id, buyer_name: 'Cliente Teste', buyer_phone: '11999998888' }),
   });
   assert.equal(orderRes.status, 201);
   const order = await orderRes.json();
-  assert.equal(order.status, 'stub_paid');
+  assert.equal(order.status, 'awaiting_payment');
   assert.equal(order.amount_cents, 5000);
+  assert.ok(order.pix_code.includes('br.gov.bcb.pix'));
+  assert.ok(order.qr_code_data_url.startsWith('data:image/png;base64,'));
+
+  const getOrderRes = await fetch(`${baseUrl}/api/orders/${order.order_id}`);
+  assert.equal(getOrderRes.status, 200);
+  const fetchedOrder = await getOrderRes.json();
+  assert.equal(fetchedOrder.status, 'awaiting_payment');
+  assert.ok(fetchedOrder.pix_code);
+
+  const proofForm = new FormData();
+  proofForm.append('proof', new Blob([Buffer.from('comprovante fake')], { type: 'image/png' }), 'comprovante.png');
+  const proofRes = await fetch(`${baseUrl}/api/orders/${order.order_id}/proof`, {
+    method: 'POST',
+    body: proofForm,
+  });
+  assert.equal(proofRes.status, 200);
+  const paidOrder = await proofRes.json();
+  assert.equal(paidOrder.status, 'paid');
+  assert.ok(paidOrder.download_url);
+
+  // Reenviar comprovante num pedido já pago deve ser rejeitado (evita
+  // sobrescrever o comprovante original sem necessidade).
+  const secondProofForm = new FormData();
+  secondProofForm.append('proof', new Blob([Buffer.from('outro')], { type: 'image/png' }), 'de-novo.png');
+  const secondProofRes = await fetch(`${baseUrl}/api/orders/${order.order_id}/proof`, {
+    method: 'POST',
+    body: secondProofForm,
+  });
+  assert.equal(secondProofRes.status, 409);
 });
 
 test('validações básicas de borda de confiança', async () => {
@@ -110,7 +146,42 @@ test('validações básicas de borda de confiança', async () => {
   const badOrder = await fetch(`${baseUrl}/api/orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ media_id: 999999, buyer_email: 'cliente@teste.com' }),
+    body: JSON.stringify({ media_id: 999999, buyer_name: 'Cliente', buyer_phone: '11999998888' }),
   });
   assert.equal(badOrder.status, 404);
+
+  // telefone inválido
+  const badPhoneOrder = await fetch(`${baseUrl}/api/orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ media_id: 999999, buyer_name: 'Cliente', buyer_phone: '123' }),
+  });
+  assert.equal(badPhoneOrder.status, 400);
+});
+
+test('compra bloqueada quando o fotógrafo não cadastrou chave Pix', async () => {
+  const email = `fotografo-sem-pix-${Date.now()}@teste.com`;
+  const registerRes = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Sem Pix', email, password: 'senha1234' }),
+  });
+  const { token } = await registerRes.json();
+
+  const uploadForm = new FormData();
+  uploadForm.append('file', new Blob([fakeJpeg(2)], { type: 'image/jpeg' }), 'foto.jpg');
+  uploadForm.append('price_cents', '3000');
+  const uploadRes = await fetch(`${baseUrl}/api/media`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: uploadForm,
+  });
+  const media = await uploadRes.json();
+
+  const orderRes = await fetch(`${baseUrl}/api/orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ media_id: media.id, buyer_name: 'Cliente', buyer_phone: '11999998888' }),
+  });
+  assert.equal(orderRes.status, 400);
 });
