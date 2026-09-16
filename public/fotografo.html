@@ -47,14 +47,24 @@
     </div>
 
     <div class="card">
+      <h2>Preço fixo por tipo de mídia</h2>
+      <form id="pricingForm">
+        <label for="pricePhoto">Preço de cada foto (R$)</label>
+        <input id="pricePhoto" type="number" step="0.01" min="0" required>
+        <label for="priceVideo">Preço de cada vídeo (R$)</label>
+        <input id="priceVideo" type="number" step="0.01" min="0" required>
+        <button type="submit">Salvar preços</button>
+      </form>
+      <p id="pricingMsg" class="msg"></p>
+    </div>
+
+    <div class="card">
       <h2>Enviar foto ou vídeo</h2>
       <form id="uploadForm">
         <label for="file">Arquivo (JPEG, PNG, WEBP, MP4, MOV)</label>
         <input id="file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime" required>
         <label for="eventName">Nome do evento</label>
         <input id="eventName" placeholder="ex.: Casamento Ana & Léo">
-        <label for="price">Preço (R$)</label>
-        <input id="price" type="number" step="0.01" min="0" required>
         <button type="submit" id="uploadBtn">Enviar</button>
       </form>
       <p id="uploadMsg" class="msg"></p>
@@ -97,11 +107,17 @@ function refreshAuthUI() {
 const pixForm = document.getElementById('pixForm');
 const pixMsg = document.getElementById('pixMsg');
 const pixKeyInput = document.getElementById('pixKey');
+const pricingForm = document.getElementById('pricingForm');
+const pricingMsg = document.getElementById('pricingMsg');
+const pricePhotoInput = document.getElementById('pricePhoto');
+const priceVideoInput = document.getElementById('priceVideo');
 
 async function loadPixKey() {
   try {
     const me = await api('/api/auth/me', { auth: true });
     pixKeyInput.value = me.pix_key || '';
+    pricePhotoInput.value = (me.price_photo_cents / 100).toFixed(2);
+    priceVideoInput.value = (me.price_video_cents / 100).toFixed(2);
   } catch (err) {
     showMsg(pixMsg, err.message, true);
   }
@@ -114,6 +130,23 @@ pixForm.addEventListener('submit', async (e) => {
     showMsg(pixMsg, 'Chave Pix salva!', false);
   } catch (err) {
     showMsg(pixMsg, err.message, true);
+  }
+});
+
+pricingForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api('/api/auth/pricing', {
+      method: 'PUT',
+      body: {
+        price_photo_cents: Math.round(Number(pricePhotoInput.value) * 100),
+        price_video_cents: Math.round(Number(priceVideoInput.value) * 100),
+      },
+      auth: true,
+    });
+    showMsg(pricingMsg, 'Preços salvos!', false);
+  } catch (err) {
+    showMsg(pricingMsg, err.message, true);
   }
 });
 
@@ -166,13 +199,11 @@ uploadForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const file = document.getElementById('file').files[0];
   const eventName = document.getElementById('eventName').value;
-  const priceReais = document.getElementById('price').value;
   if (!file) return;
 
   const fd = new FormData();
   fd.append('file', file);
   fd.append('event_name', eventName);
-  fd.append('price_cents', String(Math.round(Number(priceReais) * 100)));
 
   uploadBtn.disabled = true;
   showMsg(uploadMsg, 'Enviando...', false);
