@@ -1,5 +1,4 @@
 require('dotenv').config();
-const path = require('node:path');
 
 function required(name, fallback) {
   return process.env[name] || fallback;
@@ -16,6 +15,8 @@ module.exports = {
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     collectionId: required('REKOGNITION_COLLECTION_ID', 'foto-facial-match'),
   },
-  dbPath: path.join(__dirname, '..', 'data', process.env.NODE_ENV === 'test' ? 'test.sqlite' : 'app.sqlite'),
-  uploadsDir: path.join(__dirname, '..', process.env.NODE_ENV === 'test' ? 'uploads-test' : 'uploads'),
+  // Postgres hospedado (Neon/Vercel Postgres/Supabase injetam DATABASE_URL ou
+  // POSTGRES_URL como env var do projeto). Sem fallback pra arquivo local:
+  // filesystem da Vercel é efêmero, banco tem que ser um Postgres de verdade.
+  databaseUrl: process.env.DATABASE_URL || process.env.POSTGRES_URL,
 };

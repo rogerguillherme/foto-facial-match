@@ -13,17 +13,14 @@ const provider = config.faceProvider === 'rekognition' ? rekognitionProvider : m
 async function indexPhotoFace(mediaId, buffer) {
   const detection = await provider.detect(buffer, mediaId);
   if (!detection) {
-    db.prepare('UPDATE media SET face_status = ? WHERE id = ?').run('no_face', mediaId);
+    await db.query('UPDATE media SET face_status = $1 WHERE id = $2', ['no_face', mediaId]);
     return 'no_face';
   }
-  db.prepare(
-    'INSERT INTO media_faces (media_id, external_face_id, embedding_json) VALUES (?, ?, ?)'
-  ).run(
-    mediaId,
-    detection.externalFaceId,
-    detection.embedding ? JSON.stringify(detection.embedding) : null
+  await db.query(
+    'INSERT INTO media_faces (media_id, external_face_id, embedding_json) VALUES ($1, $2, $3)',
+    [mediaId, detection.externalFaceId, detection.embedding ? JSON.stringify(detection.embedding) : null]
   );
-  db.prepare('UPDATE media SET face_status = ? WHERE id = ?').run('indexed', mediaId);
+  await db.query('UPDATE media SET face_status = $1 WHERE id = $2', ['indexed', mediaId]);
   return 'indexed';
 }
 
@@ -37,7 +34,7 @@ async function searchBySelfie(selfieBuffer) {
       .filter((m) => Number.isFinite(m.mediaId));
   }
 
-  const catalogFaces = db.prepare('SELECT media_id, embedding_json FROM media_faces').all();
+  const catalogFaces = await db.all('SELECT media_id, embedding_json FROM media_faces');
   return provider.searchBySimilarFaces(selfieBuffer, catalogFaces, config.faceMatchThreshold);
 }
 

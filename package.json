@@ -7,15 +7,18 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "migrate": "node scripts/migrate.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-rekognition": "^3.658.0",
+    "@vercel/blob": "^2.8.0",
     "bcryptjs": "^2.4.3",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.4.0",
+    "pg": "^8.23.0",
     "pix-utils": "^2.8.2"
   },
   "engines": {

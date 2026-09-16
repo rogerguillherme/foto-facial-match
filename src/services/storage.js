@@ -1,33 +1,21 @@
-// Storage local em disco. Guarda tudo em uploads/<categoria>/<arquivo>.
-// ponytail: sem S3 agora — troque este arquivo por um client do S3/R2 quando
-// precisar servir de fora de uma única máquina; o resto do app só chama
-// save()/absolutePath()/publicUrl(), então a troca fica isolada aqui.
-const fs = require('node:fs');
+// Storage em Vercel Blob (era disco local em uploads/<categoria>/<arquivo>).
+// Filesystem da Vercel é efêmero, então mídia/comprovante precisam viver
+// fora do processo da função. `put()` já devolve a URL pública final do
+// arquivo, então guardamos essa URL direto como storage_path — publicUrl()
+// vira identidade, sem reconstrução de caminho.
 const path = require('node:path');
 const crypto = require('node:crypto');
-const config = require('../config');
+const { put } = require('@vercel/blob');
 
-function save(category, buffer, originalName) {
-  const dir = path.join(config.uploadsDir, category);
-  fs.mkdirSync(dir, { recursive: true });
+async function save(category, buffer, originalName) {
   const ext = path.extname(originalName || '') || '';
-  const filename = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
-  const fullPath = path.join(dir, filename);
-  fs.writeFileSync(fullPath, buffer);
-  return `${category}/${filename}`; // storage_path relativo, salvo no banco
-}
-
-function absolutePath(storagePath) {
-  return path.join(config.uploadsDir, storagePath);
-}
-
-function readBuffer(storagePath) {
-  return fs.readFileSync(absolutePath(storagePath));
+  const filename = `${category}/${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
+  const blob = await put(filename, buffer, { access: 'public', addRandomSuffix: false });
+  return blob.url; // storage_path salvo no banco já é a URL pública do Blob
 }
 
 function publicUrl(storagePath) {
-  // Servido estaticamente pelo Express em /files (ver app.js).
-  return `/files/${storagePath.replace(/\\/g, '/')}`;
+  return storagePath;
 }
 
-module.exports = { save, absolutePath, readBuffer, publicUrl };
+module.exports = { save, publicUrl };

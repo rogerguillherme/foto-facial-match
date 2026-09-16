@@ -7,19 +7,42 @@ selfie e o sistema encontra as mídias do catálogo em que ele aparece, para com
 
 ```bash
 npm install
-cp .env.example .env   # ajuste JWT_SECRET pelo menos
+cp .env.example .env   # ajuste DATABASE_URL e JWT_SECRET pelo menos
+npm run migrate         # cria as tabelas no Postgres apontado por DATABASE_URL
+npx vercel env pull .env.local --yes   # traz VERCEL_OIDC_TOKEN/BLOB_STORE_ID pro upload no Blob funcionar localmente
 npm start               # http://localhost:3000
 npm test                # smoke test end-to-end (cadastro -> chave pix -> upload -> busca -> compra -> comprovante -> liberado)
 ```
 
+## Deploy (Vercel)
+
+App publicado no time `rogers-projects-73fd0e69` como função serverless
+(framework "Express" nativo da Vercel — sem `vercel.json`/entrypoint
+customizado, o CLI detecta `src/app.js` e empacota tudo sozinho).
+
+```bash
+npx vercel --scope rogers-projects-73fd0e69          # preview
+npx vercel --prod --scope rogers-projects-73fd0e69   # produção
+```
+
+Banco (Postgres/Neon) e storage (Vercel Blob) são provisionados uma vez por
+projeto via `npx vercel storage create` / `npx vercel integration add neon`
+(ver histórico do projeto) — as env vars de conexão já ficam configuradas
+automaticamente. Depois de provisionar o banco, rode `npm run migrate` (com
+`DATABASE_URL` do ambiente certo) pra criar as tabelas.
+
 ## Stack
 
-- **Node.js + Express** — comum, sem exotismo.
-- **node:sqlite** (módulo nativo do Node, sem dependência externa) em vez de
-  `better-sqlite3` — a máquina de dev não tinha Visual Studio Build Tools e o
-  `better-sqlite3` não tem binário pré-compilado pro Node 24 no Windows.
-  `node:sqlite` evita compilação nativa por completo.
-- **multer** (memória) + disco local para os arquivos.
+- **Node.js + Express** — comum, sem exotismo. Roda na Vercel como função
+  serverless via suporte nativo a Express da plataforma.
+- **Postgres (Neon, via integração da Vercel)** com o client `pg` puro (sem
+  ORM) — trocado do `node:sqlite` original porque o filesystem das funções
+  serverless da Vercel é efêmero: um arquivo `.sqlite` não sobrevive entre
+  invocações/deploys.
+- **Vercel Blob** para mídia e comprovantes (era disco local) — mesmo motivo:
+  sem filesystem persistente na Vercel. `src/services/storage.js` concentra
+  a integração; o resto do app só chama `save()`/`publicUrl()`.
+- **multer** (memória) pra receber os uploads antes de mandar pro Blob.
 - **bcryptjs + jsonwebtoken** para login simples do fotógrafo (sem OAuth/social).
 - **pix-utils** para montar o payload EMV do Pix ("BR Code" copia-e-cola) e
   gerar o QR code localmente (sem gateway/API externa) — ver seção Pagamento.
@@ -92,8 +115,5 @@ em `src/routes/orders.js`):
   (`face_status: 'skipped_video'`).
 - **Provider mock não é reconhecimento facial real** — é só para dev/teste
   sem credencial. Trocar para `FACE_PROVIDER=rekognition` (com credenciais
-  AWS reais no `.env`) antes de qualquer uso com clientes de verdade.
-- **Storage local em disco**: ok para um fotógrafo/uma máquina. Trocar
-  `src/services/storage.js` por um client S3-compatível quando precisar
-  servir de mais de uma instância — o resto do app não conhece o disco
-  diretamente.
+  AWS reais nas env vars do projeto) antes de qualquer uso com clientes de
+  verdade.

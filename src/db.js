@@ -1,91 +1,37 @@
-// Persistência simples em SQLite via módulo nativo do Node (node:sqlite, estável
-// a partir do Node 22.5). Sem dependência externa, sem build nativo (evita a dor
-// de compilar better-sqlite3 no Windows sem Visual Studio instalado).
-const { DatabaseSync } = require('node:sqlite');
-const fs = require('node:fs');
-const path = require('node:path');
+// Persistência em Postgres hospedado (Neon, via integração da Vercel).
+// Trocado de node:sqlite porque o filesystem das funções serverless da
+// Vercel é efêmero: um arquivo .sqlite não sobrevive entre invocações/deploys.
+// Sem ORM — só `pg` (client leve) e o mesmo SQL explícito de antes, ajustando
+// sintaxe (placeholders $1, RETURNING id em vez de lastInsertRowid).
+const { Pool } = require('pg');
 const config = require('./config');
 
-fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
-fs.mkdirSync(config.uploadsDir, { recursive: true });
-
-const db = new DatabaseSync(config.dbPath);
-
-db.exec(`
-  PRAGMA journal_mode = WAL;
-
-  CREATE TABLE IF NOT EXISTS photographers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    pix_key TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+if (!config.databaseUrl) {
+  throw new Error(
+    'DATABASE_URL não configurada. Defina a connection string do Postgres (Neon/Vercel Postgres) no .env ou nas env vars do projeto.'
   );
-
-  CREATE TABLE IF NOT EXISTS media (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    photographer_id INTEGER NOT NULL REFERENCES photographers(id),
-    type TEXT NOT NULL CHECK (type IN ('photo','video')),
-    event_name TEXT,
-    price_cents INTEGER NOT NULL DEFAULT 0,
-    original_name TEXT NOT NULL,
-    storage_path TEXT NOT NULL,
-    face_status TEXT NOT NULL DEFAULT 'pending',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS media_faces (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    media_id INTEGER NOT NULL REFERENCES media(id),
-    external_face_id TEXT NOT NULL,
-    embedding_json TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-  CREATE INDEX IF NOT EXISTS idx_media_faces_media_id ON media_faces(media_id);
-
-  CREATE TABLE IF NOT EXISTS searches (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    selfie_storage_path TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS search_results (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    search_id INTEGER NOT NULL REFERENCES searches(id),
-    media_id INTEGER NOT NULL REFERENCES media(id),
-    similarity REAL NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-  CREATE INDEX IF NOT EXISTS idx_search_results_search_id ON search_results(search_id);
-
-  CREATE TABLE IF NOT EXISTS orders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    media_id INTEGER NOT NULL REFERENCES media(id),
-    buyer_name TEXT NOT NULL,
-    buyer_phone TEXT NOT NULL,
-    amount_cents INTEGER NOT NULL,
-    pix_code TEXT NOT NULL,
-    proof_path TEXT,
-    status TEXT NOT NULL DEFAULT 'awaiting_payment',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-`);
-
-// Migração leve pra bancos criados antes da chave Pix/fluxo de comprovante
-// existirem: sem framework de migration, só ALTER TABLE idempotente (ignora
-// "duplicate column" se a coluna já existe).
-function addColumnIfMissing(table, columnDef) {
-  try {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${columnDef}`);
-  } catch (e) {
-    if (!/duplicate column name/i.test(e.message)) throw e;
-  }
 }
-addColumnIfMissing('photographers', 'pix_key TEXT');
-addColumnIfMissing('orders', 'buyer_name TEXT');
-addColumnIfMissing('orders', 'buyer_phone TEXT');
-addColumnIfMissing('orders', 'pix_code TEXT');
-addColumnIfMissing('orders', 'proof_path TEXT');
 
-module.exports = db;
+const pool = new Pool({
+  connectionString: config.databaseUrl,
+  // Neon/Supabase exigem TLS; certificado da cadeia gerenciada não é
+  // verificável localmente, então relaxamos a verificação (comum pra esses
+  // provedores serverless — não é um Postgres com cert próprio pra validar).
+  ssl: { rejectUnauthorized: false },
+});
+
+async function query(sql, params = []) {
+  return pool.query(sql, params);
+}
+
+async function get(sql, params = []) {
+  const result = await pool.query(sql, params);
+  return result.rows[0];
+}
+
+async function all(sql, params = []) {
+  const result = await pool.query(sql, params);
+  return result.rows;
+}
+
+module.exports = { pool, query, get, all };

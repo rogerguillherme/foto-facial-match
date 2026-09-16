@@ -1,4 +1,4 @@
-require('./db'); // garante schema criado antes de subir o servidor
+require('./db'); // falha cedo se DATABASE_URL não estiver configurada
 const app = require('./app');
 const config = require('./config');
 
