@@ -58,10 +58,21 @@ test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> com
   });
   assert.equal(pixRes.status, 200);
 
+  const pricingRes = await fetch(`${baseUrl}/api/auth/pricing`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ price_photo_cents: 5000, price_video_cents: 9000 }),
+  });
+  assert.equal(pricingRes.status, 200);
+
+  const meRes = await fetch(`${baseUrl}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+  const me = await meRes.json();
+  assert.equal(me.price_photo_cents, 5000);
+  assert.equal(me.price_video_cents, 9000);
+
   const photoBytes = fakeJpeg(1);
   const uploadForm = new FormData();
   uploadForm.append('file', new Blob([photoBytes], { type: 'image/jpeg' }), 'foto.jpg');
-  uploadForm.append('price_cents', '5000');
   uploadForm.append('event_name', 'Ensaio Teste');
 
   const uploadRes = await fetch(`${baseUrl}/api/media`, {
@@ -72,6 +83,7 @@ test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> com
   assert.equal(uploadRes.status, 201);
   const media = await uploadRes.json();
   assert.equal(media.face_status, 'indexed');
+  assert.equal(media.price_cents, 5000); // preço fixo de foto configurado acima, não veio do upload
 
   // Selfie idêntica em bytes à foto -> similaridade deve bater no topo.
   const selfieForm = new FormData();
@@ -170,7 +182,6 @@ test('compra bloqueada quando o fotógrafo não cadastrou chave Pix', async () =
 
   const uploadForm = new FormData();
   uploadForm.append('file', new Blob([fakeJpeg(2)], { type: 'image/jpeg' }), 'foto.jpg');
-  uploadForm.append('price_cents', '3000');
   const uploadRes = await fetch(`${baseUrl}/api/media`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },

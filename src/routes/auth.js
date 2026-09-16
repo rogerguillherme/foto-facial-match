@@ -66,7 +66,7 @@ router.post('/login', async (req, res, next) => {
 router.get('/me', requirePhotographer, async (req, res, next) => {
   try {
     const photographer = await db.get(
-      'SELECT id, name, email, pix_key FROM photographers WHERE id = $1',
+      'SELECT id, name, email, pix_key, price_photo_cents, price_video_cents FROM photographers WHERE id = $1',
       [req.photographerId]
     );
     if (!photographer) {
@@ -89,6 +89,32 @@ router.put('/pix-key', requirePhotographer, async (req, res, next) => {
 
     await db.query('UPDATE photographers SET pix_key = $1 WHERE id = $2', [pixKey, req.photographerId]);
     res.json({ pix_key: pixKey });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Cadastra/edita o preço fixo por tipo de mídia (um valor pra qualquer foto,
+// outro pra qualquer vídeo). Passa a valer pra todo upload seguinte — não é
+// mais escolhido item a item.
+router.put('/pricing', requirePhotographer, async (req, res, next) => {
+  try {
+    const pricePhotoCents = Number.parseInt(req.body?.price_photo_cents, 10);
+    const priceVideoCents = Number.parseInt(req.body?.price_video_cents, 10);
+    if (
+      !Number.isInteger(pricePhotoCents) || pricePhotoCents < 0 ||
+      !Number.isInteger(priceVideoCents) || priceVideoCents < 0
+    ) {
+      return res.status(400).json({
+        error: 'price_photo_cents e price_video_cents são obrigatórios e devem ser inteiros >= 0 (em centavos).',
+      });
+    }
+
+    await db.query(
+      'UPDATE photographers SET price_photo_cents = $1, price_video_cents = $2 WHERE id = $3',
+      [pricePhotoCents, priceVideoCents, req.photographerId]
+    );
+    res.json({ price_photo_cents: pricePhotoCents, price_video_cents: priceVideoCents });
   } catch (e) {
     next(e);
   }

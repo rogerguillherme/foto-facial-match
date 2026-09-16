@@ -67,11 +67,22 @@ escolhidos por `FACE_PROVIDER` no `.env`:
 
 ## Modelo de dados (`src/db.js`)
 
-`photographers` (com `pix_key`) → `media` (foto/vídeo + preço + status de
+`photographers` (com `pix_key` e o preço fixo por tipo de mídia,
+`price_photo_cents`/`price_video_cents`) → `media` (foto/vídeo + preço
+resolvido no upload a partir do preço fixo do fotógrafo + status de
 indexação) → `media_faces` (rosto indexado por mídia) · `searches` +
 `search_results` (cada busca por selfie e o que ela encontrou) · `orders`
 (pedido com nome/telefone do cliente, o Pix copia-e-cola gerado, o
 comprovante enviado e o status `awaiting_payment` → `paid`).
+
+### Preço
+
+O fotógrafo configura, uma vez, um preço fixo pra qualquer foto e outro fixo
+pra qualquer vídeo (`PUT /api/auth/pricing`). Não existe mais preço por item:
+todo upload usa o valor fixo do tipo correspondente no momento do upload
+(gravado em `media.price_cents`, congelado dali pra frente mesmo que o
+fotógrafo mude o preço fixo depois). Sem valor configurado, o preço é `0` —
+o fotógrafo precisa configurar antes de vender.
 
 ## Pagamento (Pix manual, sem gateway)
 
@@ -97,9 +108,10 @@ em `src/routes/orders.js`):
 |---|---|---|---|
 | POST | `/api/auth/register` | público | cadastra fotógrafo, retorna JWT |
 | POST | `/api/auth/login` | público | login do fotógrafo, retorna JWT |
-| GET | `/api/auth/me` | fotógrafo (Bearer) | dados do próprio fotógrafo (inclui `pix_key`) |
+| GET | `/api/auth/me` | fotógrafo (Bearer) | dados do próprio fotógrafo (inclui `pix_key`, `price_photo_cents`, `price_video_cents`) |
 | PUT | `/api/auth/pix-key` | fotógrafo (Bearer) | cadastra/edita a chave Pix fixa (`pix_key`) |
-| POST | `/api/media` | fotógrafo (Bearer) | upload de foto/vídeo (`multipart/form-data`, campo `file`, mais `price_cents` e `event_name`); indexa o rosto se for foto |
+| PUT | `/api/auth/pricing` | fotógrafo (Bearer) | cadastra/edita o preço fixo por tipo (`price_photo_cents`, `price_video_cents`, inteiros >= 0 em centavos) |
+| POST | `/api/media` | fotógrafo (Bearer) | upload de foto/vídeo (`multipart/form-data`, campo `file`, mais `event_name`); preço é resolvido pelo tipo usando o preço fixo já configurado; indexa o rosto se for foto |
 | GET | `/api/media` | fotógrafo (Bearer) | lista o catálogo do próprio fotógrafo |
 | POST | `/api/match` | público | cliente envia selfie (campo `selfie`), busca no catálogo inteiro, salva e retorna os resultados |
 | GET | `/api/match/:searchId` | público | reconsulta os resultados de uma busca já feita |

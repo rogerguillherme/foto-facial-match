@@ -63,6 +63,15 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
+  // Preço passou de "por item" (price_cents em cada mídia) pra "fixo por tipo",
+  // configurado uma vez pelo fotógrafo. ADD COLUMN IF NOT EXISTS pra rodar sem
+  // quebrar em bancos que já têm a tabela (mesmo padrão idempotente do resto
+  // do arquivo). Sem default vazio: 0 até o fotógrafo configurar.
+  await db.query(`
+    ALTER TABLE photographers ADD COLUMN IF NOT EXISTS price_photo_cents INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE photographers ADD COLUMN IF NOT EXISTS price_video_cents INTEGER NOT NULL DEFAULT 0;
+  `);
+
   console.log('Schema Postgres criado/confirmado.');
   await db.pool.end();
 }

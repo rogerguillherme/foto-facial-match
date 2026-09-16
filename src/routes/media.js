@@ -30,12 +30,16 @@ router.post('/', requirePhotographer, (req, res, next) => {
         return res.status(400).json({ error: 'Envie o arquivo no campo "file" (multipart/form-data).' });
       }
 
-      const priceCents = Number.parseInt(req.body.price_cents, 10);
-      if (!Number.isInteger(priceCents) || priceCents < 0) {
-        return res.status(400).json({ error: 'price_cents é obrigatório e deve ser um inteiro >= 0 (em centavos).' });
-      }
       const eventName = typeof req.body.event_name === 'string' ? req.body.event_name.slice(0, 200) : null;
       const type = req.file.mimetype.startsWith('video/') ? 'video' : 'photo';
+
+      // Preço não vem mais do cliente: é fixo por tipo, configurado uma vez
+      // pelo fotógrafo em PUT /api/auth/pricing (0 se ele ainda não configurou).
+      const photographer = await db.get(
+        'SELECT price_photo_cents, price_video_cents FROM photographers WHERE id = $1',
+        [req.photographerId]
+      );
+      const priceCents = type === 'video' ? photographer.price_video_cents : photographer.price_photo_cents;
 
       const storagePath = await storage.save(
         type === 'video' ? 'videos' : 'photos',
