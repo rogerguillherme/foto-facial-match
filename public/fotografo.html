@@ -59,14 +59,15 @@
     </div>
 
     <div class="card">
-      <h2>Enviar foto ou vídeo</h2>
+      <h2>Enviar fotos ou vídeos</h2>
       <form id="uploadForm">
-        <label for="file">Arquivo (JPEG, PNG, WEBP, MP4, MOV)</label>
-        <input id="file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime" required>
+        <label for="file">Arquivos (JPEG, PNG, WEBP, MP4, MOV) — pode selecionar vários de uma vez</label>
+        <input id="file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime" multiple required>
         <label for="eventName">Nome do evento</label>
         <input id="eventName" placeholder="ex.: Casamento Ana & Léo">
         <button type="submit" id="uploadBtn">Enviar</button>
       </form>
+      <ul id="uploadList"></ul>
       <p id="uploadMsg" class="msg"></p>
     </div>
 
@@ -195,14 +196,14 @@ const uploadForm = document.getElementById('uploadForm');
 const uploadMsg = document.getElementById('uploadMsg');
 const uploadBtn = document.getElementById('uploadBtn');
 
-uploadForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const file = document.getElementById('file').files[0];
-  const eventName = document.getElementById('eventName').value;
-  if (!file) return;
+const uploadList = document.getElementById('uploadList');
 
-  uploadBtn.disabled = true;
-  showMsg(uploadMsg, 'Enviando...', false);
+// Envia um arquivo por vez pro fluxo já existente (upload-url -> Blob ->
+// confirmação em /api/media), atualizando a linha de status dele na lista.
+// Nenhum endpoint novo: é só o mesmo fluxo de upload de sempre, chamado uma
+// vez por arquivo selecionado.
+async function uploadOneFile(file, eventName, statusEl) {
+  statusEl.textContent = `${file.name}: enviando...`;
   try {
     // Upload direto do navegador pro Vercel Blob: o arquivo não passa pelo
     // corpo da nossa function (limite de ~4.5MB da Vercel), só a confirmação
@@ -221,14 +222,40 @@ uploadForm.addEventListener('submit', async (e) => {
       body: { url: blob.url, content_type: file.type, original_name: file.name, event_name: eventName },
       auth: true,
     });
-    showMsg(uploadMsg, 'Enviado com sucesso!', false);
-    uploadForm.reset();
-    loadCatalog();
+    statusEl.textContent = `${file.name}: ok`;
+    statusEl.className = 'ok';
+    return true;
   } catch (err) {
-    showMsg(uploadMsg, err.message, true);
-  } finally {
-    uploadBtn.disabled = false;
+    statusEl.textContent = `${file.name}: erro — ${err.message}`;
+    statusEl.className = 'error';
+    return false;
   }
+}
+
+uploadForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const files = Array.from(document.getElementById('file').files);
+  const eventName = document.getElementById('eventName').value;
+  if (!files.length) return;
+
+  uploadBtn.disabled = true;
+  uploadList.innerHTML = '';
+  showMsg(uploadMsg, `Enviando ${files.length} arquivo(s)...`, false);
+
+  // Um upload por vez (não é preciso paralelismo pra isso, e evita saturar
+  // a conexão do fotógrafo com N uploads simultâneos de foto de celular).
+  let okCount = 0;
+  for (const file of files) {
+    const li = document.createElement('li');
+    uploadList.appendChild(li);
+    const ok = await uploadOneFile(file, eventName, li);
+    if (ok) okCount++;
+  }
+
+  showMsg(uploadMsg, `${okCount} de ${files.length} arquivo(s) enviados com sucesso.`, okCount < files.length);
+  uploadForm.reset();
+  uploadBtn.disabled = false;
+  loadCatalog();
 });
 
 document.getElementById('refreshBtn').addEventListener('click', loadCatalog);

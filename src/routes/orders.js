@@ -7,67 +7,108 @@ const router = express.Router();
 
 const PROOF_MIME = /^(image\/(jpeg|png|webp)|application\/pdf)$/;
 const MAX_PROOF_BYTES = 10 * 1024 * 1024; // 10MB, é só um comprovante
+const MAX_ITEMS_PER_ORDER = 50; // sanidade, não é um limite de produto real
 
 function pathnameOf(url) {
   return new URL(url).pathname.slice(1);
 }
 
-function getMediaWithPhotographer(mediaId) {
-  return db.get(
-    `SELECT m.id, m.price_cents, m.storage_path, m.type,
-            p.id AS photographer_id, p.name AS photographer_name, p.pix_key
-     FROM media m JOIN photographers p ON p.id = m.photographer_id
-     WHERE m.id = $1`,
-    [mediaId]
-  );
+// Aceita `media_ids` (array, fluxo novo de N mídias) ou `media_id` (compat
+// com o formato antigo de 1 mídia) e normaliza pros dois casos pra uma lista
+// de inteiros únicos. Retorna null se o input não é válido.
+function normalizeMediaIds(body) {
+  let raw = body?.media_ids;
+  if (raw === undefined && body?.media_id !== undefined) raw = [body.media_id];
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_ITEMS_PER_ORDER) return null;
+  const ids = raw.map((v) => Number.parseInt(v, 10));
+  if (ids.some((n) => !Number.isInteger(n))) return null;
+  return [...new Set(ids)];
 }
 
-function serializeOrder(order, media) {
+// Carrega os itens de um pedido. Pedidos novos têm linhas em `order_items`;
+// pedidos criados antes dessa tabela existir não têm (nunca migramos dados
+// pra lá), então caímos pro `orders.media_id`/`amount_cents` originais nesse
+// caso — ver comentário de schema em scripts/migrate.js.
+async function loadOrderItems(order) {
+  const rows = await db.all(
+    `SELECT oi.media_id, oi.price_cents, m.type, m.storage_path
+     FROM order_items oi JOIN media m ON m.id = oi.media_id
+     WHERE oi.order_id = $1
+     ORDER BY oi.id`,
+    [order.id]
+  );
+  if (rows.length > 0) return rows;
+  if (!order.media_id) return [];
+  const legacyMedia = await db.get('SELECT id AS media_id, type, storage_path FROM media WHERE id = $1', [order.media_id]);
+  return legacyMedia ? [{ ...legacyMedia, price_cents: order.amount_cents }] : [];
+}
+
+function serializeOrder(order, items) {
   const out = {
     order_id: order.id,
-    media_id: order.media_id,
     amount_cents: order.amount_cents,
     status: order.status,
     buyer_name: order.buyer_name,
+    items: items.map((it) => {
+      const item = { media_id: it.media_id, type: it.type, price_cents: it.price_cents };
+      if (order.status === 'paid') item.download_url = storage.publicUrl(it.storage_path);
+      return item;
+    }),
   };
   if (order.status === 'awaiting_payment') {
     out.pix_code = order.pix_code;
   }
-  if (order.status === 'paid' && media) {
-    out.download_url = storage.publicUrl(media.storage_path);
-  }
   return out;
 }
 
-// Cria o pedido: valida comprador + mídia, gera o Pix copia-e-cola estático
-// com a chave do fotógrafo e o valor exato da mídia. Ninguém paga nada ainda
-// aqui — só gera o código pro cliente pagar por fora (app do banco).
+// Cria o pedido: valida comprador + mídias (todas do mesmo fotógrafo, já que
+// a chave Pix usada é a dele), gera UM Pix copia-e-cola estático com o valor
+// somado de todas as mídias. Ninguém paga nada ainda aqui — só gera o código
+// pro cliente pagar por fora (app do banco).
 router.post('/', async (req, res, next) => {
   try {
-    const mediaId = Number.parseInt(req.body?.media_id, 10);
+    const mediaIds = normalizeMediaIds(req.body);
     const buyerName = typeof req.body?.buyer_name === 'string' ? req.body.buyer_name.trim() : '';
     const buyerPhone = typeof req.body?.buyer_phone === 'string' ? req.body.buyer_phone.trim() : '';
 
-    if (!Number.isInteger(mediaId) || !buyerName || buyerName.length > 120) {
-      return res.status(400).json({ error: 'media_id (inteiro) e buyer_name (texto) são obrigatórios.' });
+    if (!mediaIds) {
+      return res.status(400).json({ error: `media_ids (lista de 1 a ${MAX_ITEMS_PER_ORDER} inteiros) é obrigatório.` });
+    }
+    if (!buyerName || buyerName.length > 120) {
+      return res.status(400).json({ error: 'buyer_name (texto) é obrigatório.' });
     }
     if (!buyerPhone || buyerPhone.replace(/\D/g, '').length < 8 || buyerPhone.length > 30) {
       return res.status(400).json({ error: 'buyer_phone é obrigatório e precisa ser um telefone válido.' });
     }
 
-    const media = await getMediaWithPhotographer(mediaId);
-    if (!media) {
-      return res.status(404).json({ error: 'Mídia não encontrada.' });
+    const mediaRows = await db.all(
+      `SELECT m.id, m.price_cents, m.storage_path, m.type,
+              p.id AS photographer_id, p.name AS photographer_name, p.pix_key
+       FROM media m JOIN photographers p ON p.id = m.photographer_id
+       WHERE m.id = ANY($1::int[])`,
+      [mediaIds]
+    );
+    if (mediaRows.length !== mediaIds.length) {
+      return res.status(404).json({ error: 'Uma ou mais mídias não foram encontradas.' });
     }
-    if (!media.pix_key) {
+
+    const photographerIds = new Set(mediaRows.map((m) => m.photographer_id));
+    if (photographerIds.size > 1) {
+      return res.status(400).json({ error: 'Todas as mídias do pedido precisam ser do mesmo fotógrafo (a chave Pix usada é a dele).' });
+    }
+
+    const photographer = mediaRows[0];
+    if (!photographer.pix_key) {
       return res.status(400).json({ error: 'O fotógrafo ainda não cadastrou a chave Pix. Peça pra ele configurar antes de comprar.' });
     }
 
+    const amountCents = mediaRows.reduce((sum, m) => sum + m.price_cents, 0);
+
     const generated = pix.buildStaticPix({
-      pixKey: media.pix_key,
-      merchantName: media.photographer_name,
-      amountCents: media.price_cents,
-      infoAdicional: `Midia ${media.id}`,
+      pixKey: photographer.pix_key,
+      merchantName: photographer.photographer_name,
+      amountCents,
+      infoAdicional: `Midias ${mediaIds.join(',')}`,
     });
     if (generated.error) {
       // Erro de configuração da chave Pix do fotógrafo (formato inválido etc.),
@@ -75,21 +116,39 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ error: `Não foi possível gerar o Pix: ${generated.error}` });
     }
 
-    const inserted = await db.get(
-      `INSERT INTO orders (media_id, buyer_name, buyer_phone, amount_cents, pix_code, status)
-       VALUES ($1, $2, $3, $4, $5, 'awaiting_payment') RETURNING id`,
-      [mediaId, buyerName, buyerPhone, media.price_cents, generated.brCode]
-    );
+    const client = await db.pool.connect();
+    let orderId;
+    try {
+      await client.query('BEGIN');
+      const inserted = await client.query(
+        `INSERT INTO orders (buyer_name, buyer_phone, amount_cents, pix_code, status)
+         VALUES ($1, $2, $3, $4, 'awaiting_payment') RETURNING id`,
+        [buyerName, buyerPhone, amountCents, generated.brCode]
+      );
+      orderId = inserted.rows[0].id;
+      for (const m of mediaRows) {
+        await client.query(
+          'INSERT INTO order_items (order_id, media_id, price_cents) VALUES ($1, $2, $3)',
+          [orderId, m.id, m.price_cents]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
 
     const qrCodeDataUrl = await generated.toQrDataUrl().catch(() => null);
 
     res.status(201).json({
-      order_id: inserted.id,
-      media_id: mediaId,
-      amount_cents: media.price_cents,
+      order_id: orderId,
+      amount_cents: amountCents,
       status: 'awaiting_payment',
       pix_code: generated.brCode,
       qr_code_data_url: qrCodeDataUrl,
+      items: mediaRows.map((m) => ({ media_id: m.id, type: m.type, price_cents: m.price_cents })),
     });
   } catch (e) {
     next(e);
@@ -108,8 +167,8 @@ router.get('/:id', async (req, res, next) => {
     if (!order) {
       return res.status(404).json({ error: 'Pedido não encontrado.' });
     }
-    const media = await getMediaWithPhotographer(order.media_id);
-    res.json(serializeOrder(order, media));
+    const items = await loadOrderItems(order);
+    res.json(serializeOrder(order, items));
   } catch (e) {
     next(e);
   }
@@ -146,7 +205,8 @@ router.post('/:id/proof/upload-url', async (req, res, next) => {
 });
 
 // Cliente já subiu o comprovante direto pro Blob; aqui só registramos a URL
-// e liberamos o pedido. A partir daqui o pedido já é liberado.
+// e liberamos o pedido — todas as mídias do pedido ficam disponíveis pra
+// download de uma vez.
 //
 // ponytail: NÃO existe verificação real de pagamento (sem gateway, sem
 // webhook do banco, sem OCR do comprovante). O pedido vira "paid" só por
@@ -180,9 +240,9 @@ router.post('/:id/proof', async (req, res, next) => {
 
     await db.query('UPDATE orders SET proof_path = $1, status = $2 WHERE id = $3', [proofUrl, 'paid', orderId]);
 
-    const media = await getMediaWithPhotographer(order.media_id);
     const updatedOrder = { ...order, proof_path: proofUrl, status: 'paid' };
-    res.json(serializeOrder(updatedOrder, media));
+    const items = await loadOrderItems(updatedOrder);
+    res.json(serializeOrder(updatedOrder, items));
   } catch (e) {
     next(e);
   }

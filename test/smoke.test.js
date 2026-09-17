@@ -126,6 +126,8 @@ test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> com
   const listBody = await listRes.json();
   assert.equal(listBody.results.length, matchBody.results.length);
 
+  // media_id (singular) continua aceito por compat, normalizado internamente
+  // pra uma lista de 1 item (ver normalizeMediaIds em src/routes/orders.js).
   const orderRes = await fetch(`${baseUrl}/api/orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -137,6 +139,8 @@ test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> com
   assert.equal(order.amount_cents, 5000);
   assert.ok(order.pix_code.includes('br.gov.bcb.pix'));
   assert.ok(order.qr_code_data_url.startsWith('data:image/png;base64,'));
+  assert.equal(order.items.length, 1);
+  assert.equal(order.items[0].media_id, media.id);
 
   const getOrderRes = await fetch(`${baseUrl}/api/orders/${order.order_id}`);
   assert.equal(getOrderRes.status, 200);
@@ -158,7 +162,8 @@ test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> com
   assert.equal(proofRes.status, 200);
   const paidOrder = await proofRes.json();
   assert.equal(paidOrder.status, 'paid');
-  assert.ok(paidOrder.download_url);
+  assert.equal(paidOrder.items.length, 1);
+  assert.ok(paidOrder.items[0].download_url);
 
   // Reenviar comprovante num pedido já pago deve ser rejeitado (evita
   // sobrescrever o comprovante original sem necessidade) — já na emissão
@@ -232,6 +237,150 @@ test('compra bloqueada quando o fotógrafo não cadastrou chave Pix', async () =
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ media_id: media.id, buyer_name: 'Cliente', buyer_phone: '11999998888' }),
+  });
+  assert.equal(orderRes.status, 400);
+});
+
+test('pedido com várias mídias: busca por selfie encontra as duas, compra as duas com um Pix só, comprovante libera as duas', async () => {
+  const email = `fotografo-multi-${Date.now()}@teste.com`;
+  const registerRes = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Fotógrafo Multi', email, password: 'senha1234' }),
+  });
+  const { token } = await registerRes.json();
+
+  await fetch(`${baseUrl}/api/auth/pix-key`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ pix_key: 'fotografo-multi@example.com' }),
+  });
+  await fetch(`${baseUrl}/api/auth/pricing`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ price_photo_cents: 3000, price_video_cents: 6000 }),
+  });
+
+  // Mesmos bytes nas duas fotos (e na selfie), de propósito: o provider mock
+  // só compara bytes (ver aviso `ponytail:` em faceProviders/mock.js), então
+  // isso garante que a mesma selfie "reconhece" as duas com similaridade alta
+  // — o que simula o caso real de a mesma pessoa aparecer em duas fotos.
+  const sharedBytes = fakeJpeg(Date.now() % 250);
+
+  async function uploadPhoto(name) {
+    const url = await uploadToBlob(
+      `photos/${Date.now()}-${name}.jpg`,
+      sharedBytes,
+      'image/jpeg',
+      `${baseUrl}/api/media/upload-url`,
+      { Authorization: `Bearer ${token}` }
+    );
+    const res = await fetch(`${baseUrl}/api/media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ url, content_type: 'image/jpeg', original_name: `${name}.jpg`, event_name: 'Evento Multi' }),
+    });
+    assert.equal(res.status, 201);
+    return res.json();
+  }
+
+  const mediaA = await uploadPhoto('foto-a');
+  const mediaB = await uploadPhoto('foto-b');
+
+  const selfieUrl = await uploadToBlob(
+    `selfies/${Date.now()}-selfie-multi.jpg`,
+    sharedBytes,
+    'image/jpeg',
+    `${baseUrl}/api/match/upload-url`
+  );
+  const matchRes = await fetch(`${baseUrl}/api/match`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: selfieUrl, content_type: 'image/jpeg' }),
+  });
+  assert.equal(matchRes.status, 201);
+  const matchBody = await matchRes.json();
+  const foundIds = matchBody.results.map((r) => r.media_id);
+  assert.ok(foundIds.includes(mediaA.id) && foundIds.includes(mediaB.id), 'as duas fotos deveriam aparecer na busca');
+
+  // Pedido com as duas mídias selecionadas -> um Pix só, valor total somado.
+  const orderRes = await fetch(`${baseUrl}/api/orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ media_ids: [mediaA.id, mediaB.id], buyer_name: 'Cliente Multi', buyer_phone: '11988887777' }),
+  });
+  assert.equal(orderRes.status, 201);
+  const order = await orderRes.json();
+  assert.equal(order.amount_cents, 6000); // 2x price_photo_cents (3000 cada)
+  assert.equal(order.items.length, 2);
+  assert.ok(order.pix_code.includes('br.gov.bcb.pix'));
+
+  const proofUrl = await uploadToBlob(
+    `proofs/${Date.now()}-comprovante-multi.png`,
+    Buffer.from('comprovante fake multi'),
+    'image/png',
+    `${baseUrl}/api/orders/${order.order_id}/proof/upload-url`
+  );
+  const proofRes = await fetch(`${baseUrl}/api/orders/${order.order_id}/proof`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: proofUrl, content_type: 'image/png' }),
+  });
+  assert.equal(proofRes.status, 200);
+  const paidOrder = await proofRes.json();
+  assert.equal(paidOrder.status, 'paid');
+  assert.equal(paidOrder.items.length, 2);
+  const downloadUrls = paidOrder.items.map((it) => it.download_url);
+  assert.ok(downloadUrls.every(Boolean), 'as duas mídias deveriam ter download_url');
+  assert.notEqual(downloadUrls[0], downloadUrls[1]);
+
+  // GET /api/orders/:id depois de pago também deve trazer as duas.
+  const getPaidRes = await fetch(`${baseUrl}/api/orders/${order.order_id}`);
+  const getPaidBody = await getPaidRes.json();
+  assert.equal(getPaidBody.items.length, 2);
+});
+
+test('pedido rejeita mídias de fotógrafos diferentes', async () => {
+  async function newPhotographerWithPhoto(suffix) {
+    const email = `fotografo-mix-${suffix}-${Date.now()}@teste.com`;
+    const registerRes = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: `Fotógrafo ${suffix}`, email, password: 'senha1234' }),
+    });
+    const { token } = await registerRes.json();
+    await fetch(`${baseUrl}/api/auth/pix-key`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ pix_key: `fotografo-mix-${suffix}@example.com` }),
+    });
+    await fetch(`${baseUrl}/api/auth/pricing`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ price_photo_cents: 2000, price_video_cents: 4000 }),
+    });
+    const photoUrl = await uploadToBlob(
+      `photos/${Date.now()}-mix-${suffix}.jpg`,
+      fakeJpeg((Date.now() + suffix.length) % 250),
+      'image/jpeg',
+      `${baseUrl}/api/media/upload-url`,
+      { Authorization: `Bearer ${token}` }
+    );
+    const uploadRes = await fetch(`${baseUrl}/api/media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ url: photoUrl, content_type: 'image/jpeg', original_name: `mix-${suffix}.jpg` }),
+    });
+    return uploadRes.json();
+  }
+
+  const mediaFromA = await newPhotographerWithPhoto('a');
+  const mediaFromB = await newPhotographerWithPhoto('b');
+
+  const orderRes = await fetch(`${baseUrl}/api/orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ media_ids: [mediaFromA.id, mediaFromB.id], buyer_name: 'Cliente', buyer_phone: '11999998888' }),
   });
   assert.equal(orderRes.status, 400);
 });

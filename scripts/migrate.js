@@ -79,6 +79,31 @@ async function migrate() {
     ALTER TABLE media ADD COLUMN IF NOT EXISTS preview_storage_path TEXT;
   `);
 
+  // Pedido deixa de ser 1 pedido = 1 mídia: agora um pedido pode cobrir N
+  // mídias (cliente seleciona várias no resultado da busca e paga um Pix só
+  // com o valor total). Escolha de schema: tabela `order_items` (order_id +
+  // media_id + price_cents congelado no momento da compra, mesmo padrão já
+  // usado em `media.price_cents`) em vez de espremer uma lista dentro de
+  // `orders` — cada item continua uma linha simples, sem JSON solto pra
+  // parsear. `orders.media_id` fica nullable e não é mais preenchido em
+  // pedidos novos (a lista de mídias mora em `order_items`), mas pedidos
+  // antigos continuam com o valor original — o backend cai pro fallback via
+  // `orders.media_id` quando não há `order_items` pra aquele pedido (ver
+  // `loadOrderItems` em src/routes/orders.js). Nenhum dado existente é
+  // migrado/apagado.
+  await db.query(`
+    ALTER TABLE orders ALTER COLUMN media_id DROP NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS order_items (
+      id SERIAL PRIMARY KEY,
+      order_id INTEGER NOT NULL REFERENCES orders(id),
+      media_id INTEGER NOT NULL REFERENCES media(id),
+      price_cents INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
+  `);
+
   console.log('Schema Postgres criado/confirmado.');
   await db.pool.end();
 }

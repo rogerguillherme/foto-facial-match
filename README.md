@@ -75,8 +75,28 @@ resolvido no upload a partir do preço fixo do fotógrafo + status de
 indexação + `preview_storage_path`, a versão com marca d'água da foto) →
 `media_faces` (rosto indexado por mídia) · `searches` + `search_results`
 (cada busca por selfie e o que ela encontrou) · `orders` (pedido com
-nome/telefone do cliente, o Pix copia-e-cola gerado, o comprovante enviado e
-o status `awaiting_payment` → `paid`).
+nome/telefone do cliente, o Pix copia-e-cola gerado pro valor TOTAL do
+pedido, o comprovante enviado e o status `awaiting_payment` → `paid`) →
+`order_items` (cada mídia coberta pelo pedido, com o `price_cents` congelado
+no momento da compra).
+
+### Pedido com várias mídias (`order_items`)
+
+Um pedido pode cobrir N mídias (o cliente marca várias fotos/vídeos no
+resultado da busca e paga um Pix só, no valor somado). Escolha de schema:
+tabela `order_items` (`order_id` + `media_id` + `price_cents`) em vez de
+guardar uma lista/JSON dentro de `orders` — cada item do pedido continua uma
+linha simples, sem precisar parsear nada, e dá pra somar/juntar com `media`
+com SQL normal. Todas as mídias de um pedido precisam ser do mesmo
+fotógrafo (a chave Pix usada pra gerar o código é a dele) — `POST
+/api/orders` valida isso e retorna 400 se o cliente tentar misturar.
+
+`orders.media_id` (a coluna antiga de quando 1 pedido = 1 mídia) virou
+nullable e não é mais preenchida em pedidos novos — a lista de mídias mora em
+`order_items`. Pedidos antigos (de antes dessa mudança) continuam válidos: o
+backend cai pro fallback via `orders.media_id`/`amount_cents` quando não
+encontra linhas em `order_items` pra aquele pedido (`loadOrderItems` em
+`src/routes/orders.js`). Nenhum dado existente foi migrado ou apagado.
 
 ## Marca d'água (preview antes da compra)
 
@@ -115,16 +135,18 @@ em `src/routes/orders.js`):
 
 1. Fotógrafo cadastra a própria chave Pix em `/api/auth/pix-key` (tela de
    configurações em `fotografo.html`).
-2. Cliente encontra uma mídia pela selfie, informa nome + telefone em
-   `POST /api/orders` e recebe um Pix estático (copia-e-cola + QR) com o
-   valor exato da mídia, gerado localmente com `pix-utils`.
+2. Cliente encontra mídias pela selfie, marca uma ou várias (checkbox em cada
+   resultado, resumo fixo com quantidade + valor total), informa nome +
+   telefone em `POST /api/orders` (`media_ids`, todas do mesmo fotógrafo) e
+   recebe um único Pix estático (copia-e-cola + QR) com o valor somado de
+   todas as mídias selecionadas, gerado localmente com `pix-utils`.
 3. Cliente paga por fora (app do banco) e sobe o comprovante em
    `POST /api/orders/:id/proof`.
-4. Só de subir o arquivo, o pedido já vira `paid` e a mídia fica liberada
-   pra download — **não há nenhuma verificação real do pagamento** (sem
-   webhook do banco, sem OCR do comprovante, sem aprovação manual). É uma
-   decisão consciente do dono do produto: vende pra gente conhecida e prefere
-   confiar a barrar venda com fricção.
+4. Só de subir o arquivo, o pedido já vira `paid` e TODAS as mídias do
+   pedido ficam liberadas pra download — **não há nenhuma verificação real
+   do pagamento** (sem webhook do banco, sem OCR do comprovante, sem
+   aprovação manual). É uma decisão consciente do dono do produto: vende pra
+   gente conhecida e prefere confiar a barrar venda com fricção.
 
 ## Endpoints
 
@@ -141,8 +163,8 @@ em `src/routes/orders.js`):
 | POST | `/api/match/upload-url` | público | emite o token de upload direto pro Blob pra selfie |
 | POST | `/api/match` | público | cliente confirma a selfie já enviada ao Blob (`url`, `content_type` em JSON), busca no catálogo inteiro, salva e retorna os resultados (foto com marca d'água, ver seção "Marca d'água") |
 | GET | `/api/match/:searchId` | público | reconsulta os resultados de uma busca já feita |
-| POST | `/api/orders` | público | cria o pedido (`media_id`, `buyer_name`, `buyer_phone`) e retorna o Pix copia-e-cola (`pix_code`) + QR (`qr_code_data_url`) |
-| GET | `/api/orders/:id` | público | consulta status/pix do pedido; inclui `download_url` quando `paid` |
+| POST | `/api/orders` | público | cria o pedido (`media_ids` — lista de 1+ inteiros, todos do mesmo fotógrafo —, `buyer_name`, `buyer_phone`) e retorna o Pix copia-e-cola (`pix_code`) + QR (`qr_code_data_url`) do valor total, mais `items` (cada mídia do pedido) |
+| GET | `/api/orders/:id` | público | consulta status/pix do pedido; `items` traz `download_url` por mídia quando `paid` |
 | POST | `/api/orders/:id/proof/upload-url` | público | emite o token de upload direto pro Blob pro comprovante (só se o pedido estiver `awaiting_payment`) |
 | POST | `/api/orders/:id/proof` | público | cliente confirma o comprovante já enviado ao Blob (`url`, `content_type` em JSON); libera o pedido (`paid`) na hora |
 

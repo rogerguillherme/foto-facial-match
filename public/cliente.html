@@ -21,9 +21,21 @@
 
   <div class="card hidden" id="resultsCard">
     <h2>Encontramos isso:</h2>
+    <p class="msg">Marque as fotos/vídeos que quiser comprar.</p>
     <div id="results" class="grid"></div>
   </div>
+
+  <div class="card hidden" id="checkoutCard">
+    <h2>Finalizar compra</h2>
+    <div id="checkoutBody"></div>
+  </div>
 </main>
+
+<div id="cartBar" class="cart-bar hidden">
+  <span id="cartSummary"></span>
+  <button type="button" id="cartBuyBtn">Comprar selecionadas</button>
+</div>
+
 <script src="/api.js"></script>
 <script>
 const selfieForm = document.getElementById('selfieForm');
@@ -31,10 +43,36 @@ const searchMsg = document.getElementById('searchMsg');
 const searchBtn = document.getElementById('searchBtn');
 const resultsCard = document.getElementById('resultsCard');
 const resultsEl = document.getElementById('results');
+const checkoutCard = document.getElementById('checkoutCard');
+const checkoutBody = document.getElementById('checkoutBody');
+const cartBar = document.getElementById('cartBar');
+const cartSummary = document.getElementById('cartSummary');
+const cartBuyBtn = document.getElementById('cartBuyBtn');
 
 function showMsg(el, text, isError) {
   el.textContent = text;
   el.className = 'msg ' + (isError ? 'error' : 'ok');
+}
+
+function formatCents(cents) {
+  return (cents / 100).toFixed(2).replace('.', ',');
+}
+
+// Seleção do cliente vive só no estado da página (sem carrinho persistente
+// no backend, sem sessão): um Map media_id -> dados da mídia, preenchido a
+// partir dos resultados da própria busca por selfie e descartado ao sair da
+// página ou fazer nova busca.
+const selectedMedia = new Map();
+
+function updateCartBar() {
+  const count = selectedMedia.size;
+  if (count === 0) {
+    cartBar.classList.add('hidden');
+    return;
+  }
+  const total = [...selectedMedia.values()].reduce((sum, m) => sum + m.price_cents, 0);
+  cartSummary.textContent = `${count} selecionada(s) — R$ ${formatCents(total)}`;
+  cartBar.classList.remove('hidden');
 }
 
 selfieForm.addEventListener('submit', async (e) => {
@@ -45,6 +83,9 @@ selfieForm.addEventListener('submit', async (e) => {
   searchBtn.disabled = true;
   showMsg(searchMsg, 'Buscando...', false);
   resultsCard.classList.add('hidden');
+  checkoutCard.classList.add('hidden');
+  selectedMedia.clear();
+  updateCartBar();
   try {
     // Upload direto do navegador pro Vercel Blob: sem isso, selfies de
     // celular passam fácil do limite de ~4.5MB de corpo de requisição da
@@ -72,8 +113,19 @@ function renderResults(results) {
     return;
   }
   resultsEl.innerHTML = results.map(renderResultItem).join('');
-  resultsEl.querySelectorAll('.item').forEach((itemEl) => {
-    renderBuyButton(itemEl.dataset.mediaId, itemEl.querySelector('.purchase-area'));
+  resultsEl.querySelectorAll('.item-select').forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      const mediaId = Number(checkbox.dataset.mediaId);
+      if (checkbox.checked) {
+        selectedMedia.set(mediaId, {
+          price_cents: Number(checkbox.dataset.priceCents),
+          type: checkbox.dataset.type,
+        });
+      } else {
+        selectedMedia.delete(mediaId);
+      }
+      updateCartBar();
+    });
   });
 }
 
@@ -84,23 +136,31 @@ function renderResultItem(r) {
   return `<div class="item" data-media-id="${r.media_id}">
     ${media}
     <div class="info">
+      <label class="select-row">
+        <input type="checkbox" class="item-select" data-media-id="${r.media_id}" data-price-cents="${r.price_cents}" data-type="${r.type}">
+        Selecionar
+      </label>
       <div>${r.event_name || '(sem evento)'}</div>
-      <div class="price">R$ ${(r.price_cents / 100).toFixed(2)}</div>
+      <div class="price">R$ ${formatCents(r.price_cents)}</div>
       <div class="status">similaridade: ${r.similarity}%</div>
-      <div class="purchase-area"></div>
     </div>
   </div>`;
 }
 
-// Fluxo de compra em 3 passos, tudo dentro do próprio card do resultado:
-// 1) nome+telefone -> 2) Pix copia-e-cola/QR + upload de comprovante -> 3) liberado.
-function renderBuyButton(mediaId, container) {
-  container.innerHTML = '<button type="button" class="buy-btn">Comprar</button>';
-  container.querySelector('.buy-btn').addEventListener('click', () => renderBuyForm(mediaId, container));
-}
+cartBuyBtn.addEventListener('click', () => {
+  if (selectedMedia.size === 0) return;
+  resultsCard.classList.add('hidden');
+  cartBar.classList.add('hidden');
+  renderCheckoutForm();
+});
 
-function renderBuyForm(mediaId, container) {
-  container.innerHTML = `
+// Fluxo de compra em 3 passos: 1) nome+telefone -> 2) Pix copia-e-cola/QR do
+// valor total + upload de comprovante -> 3) todas as mídias liberadas.
+function renderCheckoutForm() {
+  checkoutCard.classList.remove('hidden');
+  const total = [...selectedMedia.values()].reduce((sum, m) => sum + m.price_cents, 0);
+  checkoutBody.innerHTML = `
+    <p>${selectedMedia.size} item(ns) selecionado(s) — total <strong>R$ ${formatCents(total)}</strong></p>
     <form class="buy-form">
       <label>Nome</label>
       <input type="text" class="buyer-name" required>
@@ -109,21 +169,21 @@ function renderBuyForm(mediaId, container) {
       <button type="submit">Gerar Pix</button>
     </form>
     <p class="msg"></p>`;
-  const form = container.querySelector('.buy-form');
-  const msg = container.querySelector('.msg');
+  const form = checkoutBody.querySelector('.buy-form');
+  const msg = checkoutBody.querySelector('.msg');
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const buyer_name = container.querySelector('.buyer-name').value.trim();
-    const buyer_phone = container.querySelector('.buyer-phone').value.trim();
+    const buyer_name = checkoutBody.querySelector('.buyer-name').value.trim();
+    const buyer_phone = checkoutBody.querySelector('.buyer-phone').value.trim();
     const submitBtn = form.querySelector('button');
     submitBtn.disabled = true;
     showMsg(msg, 'Gerando Pix...', false);
     try {
       const order = await api('/api/orders', {
         method: 'POST',
-        body: { media_id: Number(mediaId), buyer_name, buyer_phone },
+        body: { media_ids: [...selectedMedia.keys()], buyer_name, buyer_phone },
       });
-      renderPixStep(order, container);
+      renderPixStep(order);
     } catch (err) {
       showMsg(msg, err.message, true);
       submitBtn.disabled = false;
@@ -131,10 +191,10 @@ function renderBuyForm(mediaId, container) {
   });
 }
 
-function renderPixStep(order, container) {
-  container.innerHTML = `
+function renderPixStep(order) {
+  checkoutBody.innerHTML = `
     <div class="pix-box">
-      <p>Pague <strong>R$ ${(order.amount_cents / 100).toFixed(2)}</strong> com o Pix copia-e-cola abaixo:</p>
+      <p>Pague <strong>R$ ${formatCents(order.amount_cents)}</strong> com o Pix copia-e-cola abaixo (${order.items.length} item(ns)):</p>
       ${order.qr_code_data_url ? `<img class="pix-qr" src="${order.qr_code_data_url}" alt="QR code Pix">` : ''}
       <textarea class="pix-code" readonly rows="3">${order.pix_code}</textarea>
       <button type="button" class="copy-btn link">Copiar código</button>
@@ -143,13 +203,13 @@ function renderPixStep(order, container) {
       <button type="button" class="confirm-btn">Já paguei, enviar comprovante</button>
       <p class="msg"></p>
     </div>`;
-  container.querySelector('.copy-btn').addEventListener('click', () => {
+  checkoutBody.querySelector('.copy-btn').addEventListener('click', () => {
     navigator.clipboard?.writeText(order.pix_code).catch(() => {});
   });
-  const confirmBtn = container.querySelector('.confirm-btn');
-  const msg = container.querySelector('.msg');
+  const confirmBtn = checkoutBody.querySelector('.confirm-btn');
+  const msg = checkoutBody.querySelector('.msg');
   confirmBtn.addEventListener('click', async () => {
-    const file = container.querySelector('.proof-file').files[0];
+    const file = checkoutBody.querySelector('.proof-file').files[0];
     if (!file) {
       showMsg(msg, 'Selecione o arquivo do comprovante.', true);
       return;
@@ -168,7 +228,7 @@ function renderPixStep(order, container) {
         method: 'POST',
         body: { url: blob.url, content_type: file.type },
       });
-      renderPaidStep(updated, container);
+      renderPaidStep(updated);
     } catch (err) {
       showMsg(msg, err.message, true);
       confirmBtn.disabled = false;
@@ -176,10 +236,13 @@ function renderPixStep(order, container) {
   });
 }
 
-function renderPaidStep(order, container) {
-  container.innerHTML = `
-    <p class="msg ok">Pagamento confirmado! Pedido liberado.</p>
-    <a class="download-link" href="${order.download_url}" download target="_blank" rel="noopener">Baixar mídia</a>`;
+function renderPaidStep(order) {
+  const links = order.items.map((item, i) =>
+    `<a class="download-link" href="${item.download_url}" download target="_blank" rel="noopener">Baixar item ${i + 1} (${item.type === 'video' ? 'vídeo' : 'foto'})</a>`
+  ).join('');
+  checkoutBody.innerHTML = `
+    <p class="msg ok">Pagamento confirmado! ${order.items.length} item(ns) liberado(s).</p>
+    ${links}`;
 }
 </script>
 </body>
