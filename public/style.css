@@ -159,8 +159,10 @@ button.link:active { box-shadow: none; transform: none; }
   .download-link:hover { transform: translateY(-1px); box-shadow: 0 1px 0 rgba(255,255,255,.25) inset, 0 8px 16px rgba(79,70,229,.35); }
 }
 .download-link:active { transform: translateY(1px); box-shadow: inset 0 2px 5px rgba(0,0,0,.3); }
-.select-row { display: flex; align-items: center; gap: .4rem; font-weight: 500; margin: 0 0 .4rem; cursor: pointer; }
-.select-row input { width: auto; margin: 0; box-shadow: none; }
+.item .cart-toggle.in-cart {
+  background: linear-gradient(180deg, #16a34a 0%, #15803d 100%);
+  box-shadow: 0 1px 0 rgba(255,255,255,.25) inset, 0 2px 4px rgba(21,128,61,.3), 0 6px 14px rgba(21,128,61,.25);
+}
 .cart-bar {
   position: fixed;
   bottom: 0;
@@ -193,7 +195,7 @@ button.link:active { box-shadow: none; transform: none; }
   padding: 0 .5rem;
 }
 .item.broken { opacity: .6; }
-.item.broken .select-row { color: #aaa; cursor: not-allowed; }
+.item.broken .cart-toggle { cursor: not-allowed; }
 
 /* Popup de foto ampliada (com marca d'água, mesma prévia da grade). */
 .lightbox {

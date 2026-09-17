@@ -21,7 +21,7 @@
 
   <div class="card hidden" id="resultsCard">
     <h2>Encontramos isso:</h2>
-    <p class="msg">Marque as fotos/vídeos que quiser comprar.</p>
+    <p class="msg">Adicione ao carrinho as fotos/vídeos que quiser comprar.</p>
     <div id="results" class="grid"></div>
   </div>
 
@@ -121,20 +121,27 @@ function renderResults(results) {
   resultsEl.querySelectorAll('img.thumb').forEach((img) => {
     img.addEventListener('click', () => openLightbox(img.src, img.alt));
   });
-  resultsEl.querySelectorAll('.item-select').forEach((checkbox) => {
-    checkbox.addEventListener('change', () => {
-      const mediaId = Number(checkbox.dataset.mediaId);
-      if (checkbox.checked) {
-        selectedMedia.set(mediaId, {
-          price_cents: Number(checkbox.dataset.priceCents),
-          type: checkbox.dataset.type,
-        });
-      } else {
+  resultsEl.querySelectorAll('.cart-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mediaId = Number(btn.dataset.mediaId);
+      if (selectedMedia.has(mediaId)) {
         selectedMedia.delete(mediaId);
+        setCartToggleState(btn, false);
+      } else {
+        selectedMedia.set(mediaId, {
+          price_cents: Number(btn.dataset.priceCents),
+          type: btn.dataset.type,
+        });
+        setCartToggleState(btn, true);
       }
       updateCartBar();
     });
   });
+}
+
+function setCartToggleState(btn, inCart) {
+  btn.classList.toggle('in-cart', inCart);
+  btn.textContent = inCart ? 'No carrinho ✓' : 'Adicionar ao carrinho';
 }
 
 function escapeAttr(text) {
@@ -150,11 +157,11 @@ window.markBroken = function (el) {
   const item = el.closest('.item');
   if (!item) return;
   item.classList.add('broken');
-  const cb = item.querySelector('.item-select');
-  if (cb) {
-    cb.checked = false;
-    cb.disabled = true;
-    selectedMedia.delete(Number(cb.dataset.mediaId));
+  const btn = item.querySelector('.cart-toggle');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Indisponível';
+    selectedMedia.delete(Number(btn.dataset.mediaId));
     updateCartBar();
   }
   const fallback = document.createElement('div');
@@ -188,13 +195,10 @@ function renderResultItem(r) {
   return `<div class="item" data-media-id="${r.media_id}">
     ${media}
     <div class="info">
-      <label class="select-row">
-        <input type="checkbox" class="item-select" data-media-id="${r.media_id}" data-price-cents="${r.price_cents}" data-type="${r.type}">
-        Selecionar
-      </label>
       <div>${escapeAttr(r.event_name) || '(sem evento)'}</div>
       <div class="price">R$ ${formatCents(r.price_cents)}</div>
       <div class="status">similaridade: ${r.similarity}%</div>
+      <button type="button" class="cart-toggle" data-media-id="${r.media_id}" data-price-cents="${r.price_cents}" data-type="${r.type}">Adicionar ao carrinho</button>
     </div>
   </div>`;
 }
