@@ -72,10 +72,32 @@ escolhidos por `FACE_PROVIDER` no `.env`:
 `photographers` (com `pix_key` e o preço fixo por tipo de mídia,
 `price_photo_cents`/`price_video_cents`) → `media` (foto/vídeo + preço
 resolvido no upload a partir do preço fixo do fotógrafo + status de
-indexação) → `media_faces` (rosto indexado por mídia) · `searches` +
-`search_results` (cada busca por selfie e o que ela encontrou) · `orders`
-(pedido com nome/telefone do cliente, o Pix copia-e-cola gerado, o
-comprovante enviado e o status `awaiting_payment` → `paid`).
+indexação + `preview_storage_path`, a versão com marca d'água da foto) →
+`media_faces` (rosto indexado por mídia) · `searches` + `search_results`
+(cada busca por selfie e o que ela encontrou) · `orders` (pedido com
+nome/telefone do cliente, o Pix copia-e-cola gerado, o comprovante enviado e
+o status `awaiting_payment` → `paid`).
+
+## Marca d'água (preview antes da compra)
+
+Só em foto (vídeo não entra em busca por selfie ainda, ver TODOs). No
+`POST /api/media` (confirmação do upload do fotógrafo), depois de baixar os
+bytes originais do Blob pra indexar o rosto, a mesma foto é usada pra gerar
+uma versão com marca d'água (`src/services/watermark.js`, via `sharp` — lib
+madura com binário pré-compilado, sem a dor de compilação nativa do
+`better-sqlite3`): texto repetido na diagonal, semi-transparente (nome do
+evento, ou "PREVIEW" se não houver), mesmas dimensões da foto original. Essa
+versão vai pra um blob separado (`photos-preview/`) e o caminho fica em
+`media.preview_storage_path` — o original (`media.storage_path`) nunca é
+alterado. Se a marca d'água falhar ao gerar (raro), o upload não é
+derrubado: só fica sem preview, e a busca cai pro original nesse caso (ver
+`COALESCE`-like fallback em `src/routes/match.js`).
+
+`POST /api/match` (resultados da busca por selfie, antes da compra) retorna
+a URL da versão **com** marca d'água. `GET /api/orders/:id` (`download_url`,
+liberado só quando `paid`) continua retornando a URL do arquivo **original**,
+sem marca d'água. `GET /api/media` (catálogo do próprio fotógrafo) também
+mostra o original — é a visão do dono da mídia, não precisa de marca d'água.
 
 ### Preço
 
@@ -117,7 +139,7 @@ em `src/routes/orders.js`):
 | POST | `/api/media` | fotógrafo (Bearer) | registra no catálogo a mídia já enviada ao Blob (`url`, `content_type`, `original_name`, `event_name` em JSON); preço é resolvido pelo tipo usando o preço fixo já configurado; indexa o rosto se for foto |
 | GET | `/api/media` | fotógrafo (Bearer) | lista o catálogo do próprio fotógrafo |
 | POST | `/api/match/upload-url` | público | emite o token de upload direto pro Blob pra selfie |
-| POST | `/api/match` | público | cliente confirma a selfie já enviada ao Blob (`url`, `content_type` em JSON), busca no catálogo inteiro, salva e retorna os resultados |
+| POST | `/api/match` | público | cliente confirma a selfie já enviada ao Blob (`url`, `content_type` em JSON), busca no catálogo inteiro, salva e retorna os resultados (foto com marca d'água, ver seção "Marca d'água") |
 | GET | `/api/match/:searchId` | público | reconsulta os resultados de uma busca já feita |
 | POST | `/api/orders` | público | cria o pedido (`media_id`, `buyer_name`, `buyer_phone`) e retorna o Pix copia-e-cola (`pix_code`) + QR (`qr_code_data_url`) |
 | GET | `/api/orders/:id` | público | consulta status/pix do pedido; inclui `download_url` quando `paid` |

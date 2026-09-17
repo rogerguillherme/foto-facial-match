@@ -71,6 +71,13 @@ async function migrate() {
     ALTER TABLE photographers ADD COLUMN IF NOT EXISTS price_photo_cents INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE photographers ADD COLUMN IF NOT EXISTS price_video_cents INTEGER NOT NULL DEFAULT 0;
   `);
+  // Versão com marca d'água da foto (gerada no upload, ver src/routes/media.js),
+  // mostrada nos resultados de busca por selfie antes da compra. Nullable:
+  // vídeo não tem (fora de escopo) e foto cuja marca d'água falhou ao gerar
+  // também fica sem — busca cai pro original nesse caso raro (ver match.js).
+  await db.query(`
+    ALTER TABLE media ADD COLUMN IF NOT EXISTS preview_storage_path TEXT;
+  `);
 
   console.log('Schema Postgres criado/confirmado.');
   await db.pool.end();

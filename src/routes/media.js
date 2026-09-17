@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const storage = require('../services/storage');
 const faceRecognition = require('../services/faceRecognition');
+const watermark = require('../services/watermark');
 const { requirePhotographer } = require('../middleware/auth');
 
 const router = express.Router();
@@ -75,6 +76,19 @@ router.post('/', requirePhotographer, async (req, res, next) => {
         if (!resp.ok) throw new Error(`download do Blob falhou (status ${resp.status})`);
         const buffer = Buffer.from(await resp.arrayBuffer());
         faceStatus = await faceRecognition.indexPhotoFace(mediaId, buffer);
+
+        try {
+          // Preview com marca d'água pro cliente ver antes de comprar (blob
+          // separado, original intacto). Texto = nome do evento, ou
+          // "PREVIEW" se o fotógrafo não informou um.
+          const watermarked = await watermark.addWatermark(buffer, eventName);
+          const preview = await storage.putPreview(mediaId, watermarked);
+          await db.query('UPDATE media SET preview_storage_path = $1 WHERE id = $2', [preview.url, mediaId]);
+        } catch (e) {
+          // Sem marca d'água não deve travar o upload: a busca cai pro
+          // original nesse caso raro (ver COALESCE em match.js).
+          console.error(`[media] falha ao gerar marca d'água da mídia ${mediaId}:`, e.message);
+        }
       } catch (e) {
         await db.query('UPDATE media SET face_status = $1 WHERE id = $2', ['failed', mediaId]);
         faceStatus = 'failed';

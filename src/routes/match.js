@@ -14,7 +14,7 @@ function pathnameOf(url) {
 
 async function loadResultsWithMedia(searchId) {
   const rows = await db.all(
-    `SELECT sr.similarity, m.id as media_id, m.type, m.event_name, m.price_cents, m.storage_path
+    `SELECT sr.similarity, m.id as media_id, m.type, m.event_name, m.price_cents, m.storage_path, m.preview_storage_path
      FROM search_results sr
      JOIN media m ON m.id = sr.media_id
      WHERE sr.search_id = $1
@@ -26,7 +26,9 @@ async function loadResultsWithMedia(searchId) {
     type: r.type,
     event_name: r.event_name,
     price_cents: r.price_cents,
-    url: storage.publicUrl(r.storage_path),
+    // Preview do cliente é sempre a versão com marca d'água; só cai pro
+    // original se a marca d'água falhou ao gerar no upload (ver media.js).
+    url: storage.publicUrl(r.preview_storage_path || r.storage_path),
     similarity: Math.round(r.similarity * 100) / 100,
   }));
 }

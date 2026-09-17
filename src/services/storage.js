@@ -14,7 +14,7 @@
 // OIDC nativamente, então é o que funciona sem mexer na configuração do
 // projeto. O front-end usa `uploadPresigned()` (não `upload()`) pra combinar.
 const { handleUploadPresigned } = require('@vercel/blob/client');
-const { issueSignedToken } = require('@vercel/blob'); // issueSignedToken só existe no pacote principal, não em /client
+const { issueSignedToken, put } = require('@vercel/blob'); // issueSignedToken/put só existem no pacote principal, não em /client
 const config = require('../config');
 
 // ponytail: não usamos `onUploadCompleted` (o webhook oficial que a Vercel
@@ -69,4 +69,16 @@ function publicUrl(storagePath) {
   return storagePath;
 }
 
-module.exports = { handleClientUpload, isOwnBlobUrl, publicUrl };
+// Upload direto pelo servidor (não presigned): usado só pra gravar a versão
+// com marca d'água já gerada em memória (`src/services/watermark.js`) logo
+// depois do upload original do fotógrafo. Mesma auth OIDC + BLOB_STORE_ID já
+// usada por `issueSignedToken` — `put()` resolve isso sozinho.
+async function putPreview(mediaId, buffer) {
+  return put(`photos-preview/${mediaId}.jpg`, buffer, {
+    access: 'public',
+    contentType: 'image/jpeg',
+    addRandomSuffix: true,
+  });
+}
+
+module.exports = { handleClientUpload, isOwnBlobUrl, publicUrl, putPreview };
