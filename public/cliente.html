@@ -31,6 +31,11 @@
   </div>
 </main>
 
+<dialog id="lightbox" class="lightbox">
+  <button type="button" class="lightbox-close" aria-label="Fechar">✕</button>
+  <img id="lightboxImg" src="" alt="">
+</dialog>
+
 <div id="cartBar" class="cart-bar hidden">
   <span id="cartSummary"></span>
   <button type="button" id="cartBuyBtn">Comprar selecionadas</button>
@@ -113,6 +118,9 @@ function renderResults(results) {
     return;
   }
   resultsEl.innerHTML = results.map(renderResultItem).join('');
+  resultsEl.querySelectorAll('img.thumb').forEach((img) => {
+    img.addEventListener('click', () => openLightbox(img.src, img.alt));
+  });
   resultsEl.querySelectorAll('.item-select').forEach((checkbox) => {
     checkbox.addEventListener('change', () => {
       const mediaId = Number(checkbox.dataset.mediaId);
@@ -155,12 +163,28 @@ window.markBroken = function (el) {
   el.replaceWith(fallback);
 };
 
+// Amplia a prévia (já com marca d'água) num popup ao clicar na foto.
+const lightbox = document.getElementById('lightbox');
+const lightboxImg = document.getElementById('lightboxImg');
+lightbox.addEventListener('click', (e) => {
+  if (e.target === lightbox) lightbox.close(); // clique fora da imagem fecha
+});
+lightbox.querySelector('.lightbox-close').addEventListener('click', () => lightbox.close());
+
+function openLightbox(url, alt) {
+  lightboxImg.src = url;
+  lightboxImg.alt = alt;
+  lightbox.showModal();
+}
+
 function renderResultItem(r) {
   const alt = escapeAttr(r.event_name || 'foto');
   const src = escapeAttr(r.url);
   const media = r.type === 'video'
     ? `<video src="${src}" muted controls onerror="markBroken(this)"></video>`
-    : `<img src="${src}" alt="${alt}" onerror="markBroken(this)">`;
+    // "thumb": clicável, abre a mesma imagem (já com marca d'água) ampliada
+    // no lightbox — ver openLightbox.
+    : `<img class="thumb" src="${src}" alt="${alt}" onerror="markBroken(this)">`;
   return `<div class="item" data-media-id="${r.media_id}">
     ${media}
     <div class="info">

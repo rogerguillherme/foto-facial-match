@@ -122,6 +122,7 @@ button.link:active { box-shadow: none; transform: none; }
   }
 }
 .item img, .item video { width: 100%; height: 110px; object-fit: cover; display: block; background: #ddd; }
+.item img.thumb { cursor: zoom-in; }
 .item .info { padding: .5rem; }
 .item .price { font-weight: 700; color: #4f46e5; }
 .item .status { color: #888; font-size: .75rem; }
@@ -193,3 +194,35 @@ button.link:active { box-shadow: none; transform: none; }
 }
 .item.broken { opacity: .6; }
 .item.broken .select-row { color: #aaa; cursor: not-allowed; }
+
+/* Popup de foto ampliada (com marca d'água, mesma prévia da grade). */
+.lightbox {
+  border: none;
+  border-radius: 10px;
+  padding: 0;
+  background: transparent;
+  max-width: 92vw;
+  max-height: 92vh;
+}
+.lightbox::backdrop { background: rgba(10,10,20,.82); }
+.lightbox img {
+  display: block;
+  max-width: 92vw;
+  max-height: 92vh;
+  border-radius: 10px;
+}
+.lightbox-close {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  width: 40px;
+  height: 40px;
+  min-height: auto;
+  margin: 0;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(20,20,40,.7);
+  font-size: 1.1rem;
+  line-height: 1;
+  box-shadow: none;
+}
