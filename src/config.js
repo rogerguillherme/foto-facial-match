@@ -19,4 +19,8 @@ module.exports = {
   // POSTGRES_URL como env var do projeto). Sem fallback pra arquivo local:
   // filesystem da Vercel é efêmero, banco tem que ser um Postgres de verdade.
   databaseUrl: process.env.DATABASE_URL || process.env.POSTGRES_URL,
+  // Injetado automaticamente pela Vercel no ambiente do projeto; usado pra
+  // validar que uma URL de mídia recebida do cliente é mesmo do nosso Blob
+  // store (ver storage.isOwnBlobUrl).
+  blobStoreId: process.env.BLOB_STORE_ID,
 };

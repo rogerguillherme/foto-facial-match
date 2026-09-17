@@ -41,8 +41,10 @@ automaticamente. Depois de provisionar o banco, rode `npm run migrate` (com
   invocações/deploys.
 - **Vercel Blob** para mídia e comprovantes (era disco local) — mesmo motivo:
   sem filesystem persistente na Vercel. `src/services/storage.js` concentra
-  a integração; o resto do app só chama `save()`/`publicUrl()`.
-- **multer** (memória) pra receber os uploads antes de mandar pro Blob.
+  a integração; o resto do app usa `handleClientUpload()`/`isOwnBlobUrl()`/
+  `publicUrl()`. Upload vai direto do navegador pro Blob (ver seção
+  "Upload direto pro Blob" abaixo) — nada de multer/multipart nas nossas
+  rotas, o arquivo nunca passa pelo corpo das nossas serverless functions.
 - **bcryptjs + jsonwebtoken** para login simples do fotógrafo (sem OAuth/social).
 - **pix-utils** para montar o payload EMV do Pix ("BR Code" copia-e-cola) e
   gerar o QR code localmente (sem gateway/API externa) — ver seção Pagamento.
@@ -111,13 +113,36 @@ em `src/routes/orders.js`):
 | GET | `/api/auth/me` | fotógrafo (Bearer) | dados do próprio fotógrafo (inclui `pix_key`, `price_photo_cents`, `price_video_cents`) |
 | PUT | `/api/auth/pix-key` | fotógrafo (Bearer) | cadastra/edita a chave Pix fixa (`pix_key`) |
 | PUT | `/api/auth/pricing` | fotógrafo (Bearer) | cadastra/edita o preço fixo por tipo (`price_photo_cents`, `price_video_cents`, inteiros >= 0 em centavos) |
-| POST | `/api/media` | fotógrafo (Bearer) | upload de foto/vídeo (`multipart/form-data`, campo `file`, mais `event_name`); preço é resolvido pelo tipo usando o preço fixo já configurado; indexa o rosto se for foto |
+| POST | `/api/media/upload-url` | fotógrafo (Bearer) | emite o token de upload direto pro Vercel Blob (chamado pelo SDK client-side, não à mão) |
+| POST | `/api/media` | fotógrafo (Bearer) | registra no catálogo a mídia já enviada ao Blob (`url`, `content_type`, `original_name`, `event_name` em JSON); preço é resolvido pelo tipo usando o preço fixo já configurado; indexa o rosto se for foto |
 | GET | `/api/media` | fotógrafo (Bearer) | lista o catálogo do próprio fotógrafo |
-| POST | `/api/match` | público | cliente envia selfie (campo `selfie`), busca no catálogo inteiro, salva e retorna os resultados |
+| POST | `/api/match/upload-url` | público | emite o token de upload direto pro Blob pra selfie |
+| POST | `/api/match` | público | cliente confirma a selfie já enviada ao Blob (`url`, `content_type` em JSON), busca no catálogo inteiro, salva e retorna os resultados |
 | GET | `/api/match/:searchId` | público | reconsulta os resultados de uma busca já feita |
 | POST | `/api/orders` | público | cria o pedido (`media_id`, `buyer_name`, `buyer_phone`) e retorna o Pix copia-e-cola (`pix_code`) + QR (`qr_code_data_url`) |
 | GET | `/api/orders/:id` | público | consulta status/pix do pedido; inclui `download_url` quando `paid` |
-| POST | `/api/orders/:id/proof` | público | cliente sobe o comprovante (`multipart/form-data`, campo `proof`); libera o pedido (`paid`) na hora |
+| POST | `/api/orders/:id/proof/upload-url` | público | emite o token de upload direto pro Blob pro comprovante (só se o pedido estiver `awaiting_payment`) |
+| POST | `/api/orders/:id/proof` | público | cliente confirma o comprovante já enviado ao Blob (`url`, `content_type` em JSON); libera o pedido (`paid`) na hora |
+
+### Upload direto pro Blob (sem passar pela function)
+
+As Serverless Functions da Vercel têm um limite de ~4.5MB de corpo de
+requisição de ENTRADA — pouco pra foto de celular. Por isso os 3 uploads
+(mídia do fotógrafo, selfie do cliente, comprovante do Pix) vão direto do
+navegador pro Vercel Blob via `uploadPresigned()` do `@vercel/blob/client`
+(carregado por CDN, `https://esm.sh/@vercel/blob/client`, sem bundler): o
+front chama a rota `.../upload-url` correspondente pra pegar um token
+assinado, sobe o arquivo direto pro Blob, e só então confirma no endpoint
+principal (JSON com a URL do Blob) — que é quem grava no banco (e, no caso
+de foto, baixa os bytes de volta do Blob pra indexar o rosto; isso é
+requisição de SAÍDA, sem o limite de 4.5MB).
+
+Usamos o fluxo **presigned** (`handleUploadPresigned`/`issueSignedToken`),
+não o fluxo mais comum de "client token" (`handleUpload`/`upload`) da
+documentação: este projeto conecta o Blob store só com credenciais OIDC
+(sem `BLOB_READ_WRITE_TOKEN` estático — ver `npx vercel storage status`), e
+`generateClientTokenFromReadWriteToken` (usado por `handleUpload`) exige um
+token estático. `issueSignedToken` já suporta OIDC nativamente.
 
 ## TODOs explícitos / stubs
 

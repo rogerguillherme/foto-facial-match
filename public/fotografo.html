@@ -201,14 +201,26 @@ uploadForm.addEventListener('submit', async (e) => {
   const eventName = document.getElementById('eventName').value;
   if (!file) return;
 
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('event_name', eventName);
-
   uploadBtn.disabled = true;
   showMsg(uploadMsg, 'Enviando...', false);
   try {
-    await api('/api/media', { method: 'POST', body: fd, auth: true });
+    // Upload direto do navegador pro Vercel Blob: o arquivo não passa pelo
+    // corpo da nossa function (limite de ~4.5MB da Vercel), só a confirmação
+    // final com a URL do Blob passa por /api/media. `uploadPresigned` (não
+    // `upload`) porque o Blob store deste projeto usa credenciais OIDC, sem
+    // token estático — ver comentário em src/services/storage.js.
+    const { uploadPresigned } = await import('https://esm.sh/@vercel/blob/client');
+    const category = file.type.startsWith('video/') ? 'videos' : 'photos';
+    const blob = await uploadPresigned(`${category}/${Date.now()}-${file.name}`, file, {
+      access: 'public', // exigido pelo SDK como checagem client-side; o store já é público
+      handleUploadUrl: '/api/media/upload-url',
+      headers: { Authorization: 'Bearer ' + getToken() },
+    });
+    await api('/api/media', {
+      method: 'POST',
+      body: { url: blob.url, content_type: file.type, original_name: file.name, event_name: eventName },
+      auth: true,
+    });
     showMsg(uploadMsg, 'Enviado com sucesso!', false);
     uploadForm.reset();
     loadCatalog();

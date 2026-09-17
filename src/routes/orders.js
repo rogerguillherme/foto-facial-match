@@ -1,5 +1,4 @@
 const express = require('express');
-const multer = require('multer');
 const db = require('../db');
 const storage = require('../services/storage');
 const pix = require('../services/pix');
@@ -7,16 +6,11 @@ const pix = require('../services/pix');
 const router = express.Router();
 
 const PROOF_MIME = /^(image\/(jpeg|png|webp)|application\/pdf)$/;
-const uploadProof = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB, é só um comprovante
-  fileFilter(req, file, cb) {
-    if (!PROOF_MIME.test(file.mimetype)) {
-      return cb(new Error('Tipo de arquivo não suportado. Envie JPEG, PNG, WEBP ou PDF.'));
-    }
-    cb(null, true);
-  },
-});
+const MAX_PROOF_BYTES = 10 * 1024 * 1024; // 10MB, é só um comprovante
+
+function pathnameOf(url) {
+  return new URL(url).pathname.slice(1);
+}
 
 function getMediaWithPhotographer(mediaId) {
   return db.get(
@@ -121,15 +115,46 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// Cliente sobe o comprovante do Pix. A partir daqui o pedido já é liberado.
+// Emite o token de upload direto pro Blob pro comprovante (público, mas só
+// pra um pedido existente que ainda esteja aguardando pagamento).
+router.post('/:id/proof/upload-url', async (req, res, next) => {
+  try {
+    const orderId = Number.parseInt(req.params.id, 10);
+    if (!Number.isInteger(orderId)) {
+      return res.status(400).json({ error: 'id inválido.' });
+    }
+    const order = await db.get('SELECT status FROM orders WHERE id = $1', [orderId]);
+    if (!order) {
+      return res.status(404).json({ error: 'Pedido não encontrado.' });
+    }
+    if (order.status !== 'awaiting_payment') {
+      return res.status(409).json({ error: `Pedido já está com status "${order.status}".` });
+    }
+
+    await storage.handleClientUpload(req, res, async (pathname) => {
+      if (!pathname.startsWith('proofs/')) {
+        throw new Error('Caminho de upload inválido.');
+      }
+      return {
+        allowedContentTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
+        maximumSizeInBytes: MAX_PROOF_BYTES,
+      };
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Cliente já subiu o comprovante direto pro Blob; aqui só registramos a URL
+// e liberamos o pedido. A partir daqui o pedido já é liberado.
 //
 // ponytail: NÃO existe verificação real de pagamento (sem gateway, sem
 // webhook do banco, sem OCR do comprovante). O pedido vira "paid" só por
-// receber um arquivo aqui — decisão consciente do dono do produto, que
-// vende pra gente conhecida e prefere confiar a bloquear compra por
-// fricção de aprovação manual/IA. Se algum dia isso mudar (público maior,
-// desconhecidos), o upgrade natural é: gateway Pix real com webhook de
-// confirmação, ou pelo menos revisão manual antes de liberar.
+// registrar a URL de um arquivo aqui — decisão consciente do dono do
+// produto, que vende pra gente conhecida e prefere confiar a bloquear
+// compra por fricção de aprovação manual/IA. Se algum dia isso mudar
+// (público maior, desconhecidos), o upgrade natural é: gateway Pix real com
+// webhook de confirmação, ou pelo menos revisão manual antes de liberar.
 router.post('/:id/proof', async (req, res, next) => {
   try {
     const orderId = Number.parseInt(req.params.id, 10);
@@ -144,28 +169,20 @@ router.post('/:id/proof', async (req, res, next) => {
       return res.status(409).json({ error: `Pedido já está com status "${order.status}".` });
     }
 
-    uploadProof.single('proof')(req, res, async (err) => {
-      try {
-        if (err) {
-          return res.status(400).json({ error: err.message });
-        }
-        if (!req.file) {
-          return res.status(400).json({ error: 'Envie o comprovante no campo "proof" (multipart/form-data).' });
-        }
+    const proofUrl = typeof req.body?.url === 'string' ? req.body.url : '';
+    const contentType = typeof req.body?.content_type === 'string' ? req.body.content_type : '';
+    if (!proofUrl || !storage.isOwnBlobUrl(proofUrl) || !PROOF_MIME.test(contentType) ||
+        !pathnameOf(proofUrl).startsWith('proofs/')) {
+      return res.status(400).json({
+        error: 'url (do upload direto ao Blob) e content_type (JPEG, PNG, WEBP ou PDF) são obrigatórios e válidos.',
+      });
+    }
 
-        const proofPath = await storage.save('proofs', req.file.buffer, req.file.originalname);
+    await db.query('UPDATE orders SET proof_path = $1, status = $2 WHERE id = $3', [proofUrl, 'paid', orderId]);
 
-        // Libera o pedido na hora, sem checar nada do comprovante em si — ver
-        // aviso ponytail acima do handler.
-        await db.query('UPDATE orders SET proof_path = $1, status = $2 WHERE id = $3', [proofPath, 'paid', orderId]);
-
-        const media = await getMediaWithPhotographer(order.media_id);
-        const updatedOrder = { ...order, proof_path: proofPath, status: 'paid' };
-        res.json(serializeOrder(updatedOrder, media));
-      } catch (e2) {
-        next(e2);
-      }
-    });
+    const media = await getMediaWithPhotographer(order.media_id);
+    const updatedOrder = { ...order, proof_path: proofUrl, status: 'paid' };
+    res.json(serializeOrder(updatedOrder, media));
   } catch (e) {
     next(e);
   }

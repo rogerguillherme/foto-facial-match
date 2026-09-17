@@ -41,14 +41,21 @@ selfieForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const file = document.getElementById('selfie').files[0];
   if (!file) return;
-  const fd = new FormData();
-  fd.append('selfie', file);
 
   searchBtn.disabled = true;
   showMsg(searchMsg, 'Buscando...', false);
   resultsCard.classList.add('hidden');
   try {
-    const data = await api('/api/match', { method: 'POST', body: fd });
+    // Upload direto do navegador pro Vercel Blob: sem isso, selfies de
+    // celular passam fácil do limite de ~4.5MB de corpo de requisição da
+    // Vercel pras nossas serverless functions. `uploadPresigned` porque o
+    // Blob store deste projeto usa credenciais OIDC, sem token estático.
+    const { uploadPresigned } = await import('https://esm.sh/@vercel/blob/client');
+    const blob = await uploadPresigned(`selfies/${Date.now()}-${file.name}`, file, {
+      access: 'public', // exigido pelo SDK como checagem client-side; o store já é público
+      handleUploadUrl: '/api/match/upload-url',
+    });
+    const data = await api('/api/match', { method: 'POST', body: { url: blob.url, content_type: file.type } });
     showMsg(searchMsg, `Busca #${data.search_id} concluída.`, false);
     renderResults(data.results);
   } catch (err) {
@@ -147,12 +154,20 @@ function renderPixStep(order, container) {
       showMsg(msg, 'Selecione o arquivo do comprovante.', true);
       return;
     }
-    const fd = new FormData();
-    fd.append('proof', file);
     confirmBtn.disabled = true;
     showMsg(msg, 'Enviando comprovante...', false);
     try {
-      const updated = await api(`/api/orders/${order.order_id}/proof`, { method: 'POST', body: fd });
+      // Mesmo motivo dos outros uploads: direto pro Blob, sem passar pelo
+      // limite de corpo de requisição das serverless functions.
+      const { uploadPresigned } = await import('https://esm.sh/@vercel/blob/client');
+      const blob = await uploadPresigned(`proofs/${Date.now()}-${file.name}`, file, {
+        access: 'public', // exigido pelo SDK como checagem client-side; o store já é público
+        handleUploadUrl: `/api/orders/${order.order_id}/proof/upload-url`,
+      });
+      const updated = await api(`/api/orders/${order.order_id}/proof`, {
+        method: 'POST',
+        body: { url: blob.url, content_type: file.type },
+      });
       renderPaidStep(updated, container);
     } catch (err) {
       showMsg(msg, err.message, true);

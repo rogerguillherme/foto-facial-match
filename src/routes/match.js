@@ -1,21 +1,16 @@
 const express = require('express');
-const multer = require('multer');
 const db = require('../db');
 const storage = require('../services/storage');
 const faceRecognition = require('../services/faceRecognition');
 
 const router = express.Router();
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB, é só uma selfie
-  fileFilter(req, file, cb) {
-    if (!/^image\/(jpeg|png|webp)$/.test(file.mimetype)) {
-      return cb(new Error('Selfie precisa ser JPEG, PNG ou WEBP.'));
-    }
-    cb(null, true);
-  },
-});
+const ALLOWED_MIME = /^image\/(jpeg|png|webp)$/;
+const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB, é só uma selfie
+
+function pathnameOf(url) {
+  return new URL(url).pathname.slice(1);
+}
 
 async function loadResultsWithMedia(searchId) {
   const rows = await db.all(
@@ -36,48 +31,75 @@ async function loadResultsWithMedia(searchId) {
   }));
 }
 
-// Cliente final envia a selfie -> busca por similaridade no catálogo inteiro.
-router.post('/', (req, res, next) => {
-  upload.single('selfie')(req, res, async (err) => {
-    try {
-      if (err) {
-        return res.status(400).json({ error: err.message });
-      }
-      if (!req.file) {
-        return res.status(400).json({ error: 'Envie a selfie no campo "selfie" (multipart/form-data).' });
-      }
-
-      let matches;
-      try {
-        matches = await faceRecognition.searchBySelfie(req.file.buffer);
-      } catch (e) {
-        console.error('[match] falha na busca por similaridade facial:', e.message);
-        return res.status(502).json({ error: 'Não foi possível processar a selfie agora. Tente novamente.' });
-      }
-
-      const selfiePath = await storage.save('selfies', req.file.buffer, req.file.originalname);
-      const inserted = await db.get('INSERT INTO searches (selfie_storage_path) VALUES ($1) RETURNING id', [
-        selfiePath,
-      ]);
-      const searchId = inserted.id;
-
-      for (const match of matches) {
-        await db.query('INSERT INTO search_results (search_id, media_id, similarity) VALUES ($1, $2, $3)', [
-          searchId,
-          match.mediaId,
-          match.similarity,
-        ]);
-      }
-
-      res.status(201).json({
-        search_id: searchId,
-        provider: faceRecognition.providerName,
-        results: await loadResultsWithMedia(searchId),
-      });
-    } catch (e) {
-      next(e);
+// Emite o token de upload direto pro Blob pra selfie do cliente (público —
+// mesma rota é usada por qualquer visitante, sem login).
+router.post('/upload-url', async (req, res) => {
+  await storage.handleClientUpload(req, res, async (pathname) => {
+    if (!pathname.startsWith('selfies/')) {
+      throw new Error('Caminho de upload inválido.');
     }
+    return {
+      allowedContentTypes: ['image/jpeg', 'image/png', 'image/webp'],
+      maximumSizeInBytes: MAX_SIZE_BYTES,
+    };
   });
+});
+
+// Cliente final já subiu a selfie direto pro Blob -> busca por similaridade
+// no catálogo inteiro.
+router.post('/', async (req, res, next) => {
+  try {
+    const selfieUrl = typeof req.body?.url === 'string' ? req.body.url : '';
+    const contentType = typeof req.body?.content_type === 'string' ? req.body.content_type : '';
+
+    if (!selfieUrl || !storage.isOwnBlobUrl(selfieUrl) || !ALLOWED_MIME.test(contentType) ||
+        !pathnameOf(selfieUrl).startsWith('selfies/')) {
+      return res.status(400).json({
+        error: 'url (do upload direto ao Blob) e content_type (JPEG, PNG ou WEBP) são obrigatórios e válidos.',
+      });
+    }
+
+    let selfieBuffer;
+    try {
+      // Requisição de SAÍDA pro Blob — sem o limite de ~4.5MB de corpo de
+      // requisição de ENTRADA das serverless functions.
+      const resp = await fetch(selfieUrl);
+      if (!resp.ok) throw new Error(`download do Blob falhou (status ${resp.status})`);
+      selfieBuffer = Buffer.from(await resp.arrayBuffer());
+    } catch (e) {
+      console.error('[match] falha ao baixar a selfie do Blob:', e.message);
+      return res.status(502).json({ error: 'Não foi possível processar a selfie agora. Tente novamente.' });
+    }
+
+    let matches;
+    try {
+      matches = await faceRecognition.searchBySelfie(selfieBuffer);
+    } catch (e) {
+      console.error('[match] falha na busca por similaridade facial:', e.message);
+      return res.status(502).json({ error: 'Não foi possível processar a selfie agora. Tente novamente.' });
+    }
+
+    const inserted = await db.get('INSERT INTO searches (selfie_storage_path) VALUES ($1) RETURNING id', [
+      selfieUrl,
+    ]);
+    const searchId = inserted.id;
+
+    for (const match of matches) {
+      await db.query('INSERT INTO search_results (search_id, media_id, similarity) VALUES ($1, $2, $3)', [
+        searchId,
+        match.mediaId,
+        match.similarity,
+      ]);
+    }
+
+    res.status(201).json({
+      search_id: searchId,
+      provider: faceRecognition.providerName,
+      results: await loadResultsWithMedia(searchId),
+    });
+  } catch (e) {
+    next(e);
+  }
 });
 
 // Listagem dos resultados de uma busca já feita (ex.: cliente volta depois).
