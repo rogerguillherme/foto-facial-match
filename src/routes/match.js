@@ -21,16 +21,21 @@ async function loadResultsWithMedia(searchId) {
      ORDER BY sr.similarity DESC`,
     [searchId]
   );
-  return rows.map((r) => ({
-    media_id: r.media_id,
-    type: r.type,
-    event_name: r.event_name,
-    price_cents: r.price_cents,
-    // Preview do cliente é sempre a versão com marca d'água; só cai pro
-    // original se a marca d'água falhou ao gerar no upload (ver media.js).
-    url: storage.publicUrl(r.preview_storage_path || r.storage_path),
-    similarity: Math.round(r.similarity * 100) / 100,
-  }));
+  return rows
+    .map((r) => ({
+      media_id: r.media_id,
+      type: r.type,
+      event_name: r.event_name,
+      price_cents: r.price_cents,
+      // Preview do cliente é sempre a versão com marca d'água; só cai pro
+      // original se a marca d'água falhou ao gerar no upload (ver media.js).
+      url: storage.publicUrl(r.preview_storage_path || r.storage_path),
+      similarity: Math.round(r.similarity * 100) / 100,
+    }))
+    // Não oferece ao cliente mídia sem imagem exibível (registros antigos com
+    // caminho local inválido, ou blob removido): o comprador não tem como
+    // conferir que é ele, então esses itens não entram no resultado.
+    .filter((r) => r.url);
 }
 
 // Emite o token de upload direto pro Blob pra selfie do cliente (público —

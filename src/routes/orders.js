@@ -103,6 +103,13 @@ router.post('/', async (req, res, next) => {
     }
 
     const amountCents = mediaRows.reduce((sum, m) => sum + m.price_cents, 0);
+    if (!Number.isInteger(amountCents) || amountCents <= 0) {
+      // Pix estático com valor 0 é rejeitado por parte das carteiras. Se o
+      // total deu 0, é porque o fotógrafo não configurou o preço das mídias.
+      return res.status(400).json({
+        error: 'O valor do pedido é R$ 0,00. O fotógrafo precisa configurar o preço das mídias antes da venda.',
+      });
+    }
 
     const generated = pix.buildStaticPix({
       pixKey: photographer.pix_key,

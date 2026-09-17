@@ -39,6 +39,15 @@
     <div class="card">
       <h2>Chave Pix (recebimento)</h2>
       <form id="pixForm">
+        <label for="pixKeyType">Tipo da chave</label>
+        <select id="pixKeyType">
+          <option value="">Detectar automaticamente</option>
+          <option value="cpf">CPF</option>
+          <option value="cnpj">CNPJ</option>
+          <option value="email">E-mail</option>
+          <option value="phone">Celular</option>
+          <option value="evp">Aleatória</option>
+        </select>
         <label for="pixKey">Sua chave Pix</label>
         <input id="pixKey" placeholder="e-mail, telefone, CPF/CNPJ ou chave aleatória">
         <button type="submit">Salvar chave Pix</button>
@@ -108,6 +117,7 @@ function refreshAuthUI() {
 const pixForm = document.getElementById('pixForm');
 const pixMsg = document.getElementById('pixMsg');
 const pixKeyInput = document.getElementById('pixKey');
+const pixKeyTypeInput = document.getElementById('pixKeyType');
 const pricingForm = document.getElementById('pricingForm');
 const pricingMsg = document.getElementById('pricingMsg');
 const pricePhotoInput = document.getElementById('pricePhoto');
@@ -117,6 +127,7 @@ async function loadPixKey() {
   try {
     const me = await api('/api/auth/me', { auth: true });
     pixKeyInput.value = me.pix_key || '';
+    pixKeyTypeInput.value = me.pix_key_type || '';
     pricePhotoInput.value = (me.price_photo_cents / 100).toFixed(2);
     priceVideoInput.value = (me.price_video_cents / 100).toFixed(2);
   } catch (err) {
@@ -127,7 +138,14 @@ async function loadPixKey() {
 pixForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
-    await api('/api/auth/pix-key', { method: 'PUT', body: { pix_key: pixKeyInput.value.trim() }, auth: true });
+    const saved = await api('/api/auth/pix-key', {
+      method: 'PUT',
+      body: { pix_key: pixKeyInput.value.trim(), pix_key_type: pixKeyTypeInput.value || undefined },
+      auth: true,
+    });
+    // Reflete a versão normalizada (ex.: telefone vira +55...) na tela.
+    pixKeyInput.value = saved.pix_key || pixKeyInput.value;
+    pixKeyTypeInput.value = saved.pix_key_type || pixKeyTypeInput.value;
     showMsg(pixMsg, 'Chave Pix salva!', false);
   } catch (err) {
     showMsg(pixMsg, err.message, true);

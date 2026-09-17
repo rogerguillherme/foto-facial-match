@@ -65,8 +65,20 @@ function isOwnBlobUrl(url) {
   }
 }
 
+// Só retorna a URL se for uma URL http(s) absoluta (o que os uploads pro Blob
+// sempre são). Registros antigos da era "disco local" guardavam um caminho
+// relativo (ex.: "photos/x.jpg") em storage_path; devolver isso pro <img src>
+// resultava em imagem quebrada (o navegador tentava carregar relativo à
+// página e batia 404). Nesses casos retornamos null e quem consome decide
+// (o front mostra "prévia indisponível" e a busca não oferece o item à venda).
 function publicUrl(storagePath) {
-  return storagePath;
+  if (typeof storagePath !== 'string' || !storagePath) return null;
+  try {
+    const parsed = new URL(storagePath);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? storagePath : null;
+  } catch {
+    return null;
+  }
 }
 
 // Upload direto pelo servidor (não presigned): usado só pra gravar a versão

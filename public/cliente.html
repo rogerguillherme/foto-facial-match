@@ -129,10 +129,38 @@ function renderResults(results) {
   });
 }
 
+function escapeAttr(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Se a prévia não carregar (blob removido, rede etc.), troca por um
+// placeholder e desabilita a seleção — o cliente não deve comprar uma foto
+// que nem consegue ver.
+window.markBroken = function (el) {
+  const item = el.closest('.item');
+  if (!item) return;
+  item.classList.add('broken');
+  const cb = item.querySelector('.item-select');
+  if (cb) {
+    cb.checked = false;
+    cb.disabled = true;
+    selectedMedia.delete(Number(cb.dataset.mediaId));
+    updateCartBar();
+  }
+  const fallback = document.createElement('div');
+  fallback.className = 'thumb-fallback';
+  fallback.textContent = 'prévia indisponível';
+  el.replaceWith(fallback);
+};
+
 function renderResultItem(r) {
+  const alt = escapeAttr(r.event_name || 'foto');
+  const src = escapeAttr(r.url);
   const media = r.type === 'video'
-    ? `<video src="${r.url}" muted controls></video>`
-    : `<img src="${r.url}" alt="${r.event_name || 'foto'}">`;
+    ? `<video src="${src}" muted controls onerror="markBroken(this)"></video>`
+    : `<img src="${src}" alt="${alt}" onerror="markBroken(this)">`;
   return `<div class="item" data-media-id="${r.media_id}">
     ${media}
     <div class="info">
@@ -140,7 +168,7 @@ function renderResultItem(r) {
         <input type="checkbox" class="item-select" data-media-id="${r.media_id}" data-price-cents="${r.price_cents}" data-type="${r.type}">
         Selecionar
       </label>
-      <div>${r.event_name || '(sem evento)'}</div>
+      <div>${escapeAttr(r.event_name) || '(sem evento)'}</div>
       <div class="price">R$ ${formatCents(r.price_cents)}</div>
       <div class="status">similaridade: ${r.similarity}%</div>
     </div>

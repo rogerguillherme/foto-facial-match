@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "migrate": "node scripts/migrate.js",
+    "reindex-faces": "node scripts/reindex-faces.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
 const config = require('../config');
+const { normalizePixKey } = require('../services/pixKey');
 const { requirePhotographer } = require('../middleware/auth');
 
 const router = express.Router();
@@ -66,7 +67,7 @@ router.post('/login', async (req, res, next) => {
 router.get('/me', requirePhotographer, async (req, res, next) => {
   try {
     const photographer = await db.get(
-      'SELECT id, name, email, pix_key, price_photo_cents, price_video_cents FROM photographers WHERE id = $1',
+      'SELECT id, name, email, pix_key, pix_key_type, price_photo_cents, price_video_cents FROM photographers WHERE id = $1',
       [req.photographerId]
     );
     if (!photographer) {
@@ -79,16 +80,26 @@ router.get('/me', requirePhotographer, async (req, res, next) => {
 });
 
 // Cadastra/edita a chave Pix fixa do fotógrafo. É essa chave que entra no
-// Pix copia-e-cola gerado pra cada pedido.
+// Pix copia-e-cola gerado pra cada pedido. A chave é NORMALIZADA/VALIDADA aqui
+// (ver src/services/pixKey.js) antes de gravar, pra não gerar mais um
+// copia-e-cola com chave que o banco do pagador não consegue resolver.
+// `pix_key_type` (opcional) desfaz a ambiguidade entre CPF e celular de 11
+// dígitos; sem ele, o tipo é detectado automaticamente quando dá.
 router.put('/pix-key', requirePhotographer, async (req, res, next) => {
   try {
-    const pixKey = typeof req.body?.pix_key === 'string' ? req.body.pix_key.trim() : '';
-    if (!pixKey || pixKey.length > 77) {
-      return res.status(400).json({ error: 'pix_key é obrigatória (texto de até 77 caracteres).' });
+    const rawKey = typeof req.body?.pix_key === 'string' ? req.body.pix_key : '';
+    const declaredType = typeof req.body?.pix_key_type === 'string' ? req.body.pix_key_type : undefined;
+
+    const normalized = normalizePixKey(rawKey, declaredType);
+    if (normalized.error) {
+      return res.status(400).json({ error: normalized.error });
     }
 
-    await db.query('UPDATE photographers SET pix_key = $1 WHERE id = $2', [pixKey, req.photographerId]);
-    res.json({ pix_key: pixKey });
+    await db.query(
+      'UPDATE photographers SET pix_key = $1, pix_key_type = $2 WHERE id = $3',
+      [normalized.key, normalized.type, req.photographerId]
+    );
+    res.json({ pix_key: normalized.key, pix_key_type: normalized.type });
   } catch (e) {
     next(e);
   }

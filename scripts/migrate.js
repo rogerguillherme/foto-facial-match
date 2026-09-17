@@ -71,6 +71,13 @@ async function migrate() {
     ALTER TABLE photographers ADD COLUMN IF NOT EXISTS price_photo_cents INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE photographers ADD COLUMN IF NOT EXISTS price_video_cents INTEGER NOT NULL DEFAULT 0;
   `);
+  // Tipo da chave Pix (cpf/cnpj/email/phone/evp), gravado junto com a chave já
+  // normalizada (ver src/services/pixKey.js). Nullable: chaves cadastradas
+  // antes desta coluna existir ficam sem tipo até o fotógrafo salvar de novo —
+  // a normalização passa a valer no próximo salvamento.
+  await db.query(`
+    ALTER TABLE photographers ADD COLUMN IF NOT EXISTS pix_key_type TEXT;
+  `);
   // Versão com marca d'água da foto (gerada no upload, ver src/routes/media.js),
   // mostrada nos resultados de busca por selfie antes da compra. Nullable:
   // vídeo não tem (fora de escopo) e foto cuja marca d'água falhou ao gerar
