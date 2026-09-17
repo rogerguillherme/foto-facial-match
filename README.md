@@ -161,12 +161,12 @@ em `src/routes/orders.js`):
 | POST | `/api/media` | fotógrafo (Bearer) | registra no catálogo a mídia já enviada ao Blob (`url`, `content_type`, `original_name`, `event_name` em JSON); preço é resolvido pelo tipo usando o preço fixo já configurado; indexa o rosto se for foto |
 | GET | `/api/media` | fotógrafo (Bearer) | lista o catálogo do próprio fotógrafo |
 | POST | `/api/match/upload-url` | público | emite o token de upload direto pro Blob pra selfie |
-| POST | `/api/match` | público | cliente confirma a selfie já enviada ao Blob (`url`, `content_type` em JSON), busca no catálogo inteiro, salva e retorna os resultados (foto com marca d'água, ver seção "Marca d'água") |
-| GET | `/api/match/:searchId` | público | reconsulta os resultados de uma busca já feita |
-| POST | `/api/orders` | público | cria o pedido (`media_ids` — lista de 1+ inteiros, todos do mesmo fotógrafo —, `buyer_name`, `buyer_phone`) e retorna o Pix copia-e-cola (`pix_code`) + QR (`qr_code_data_url`) do valor total, mais `items` (cada mídia do pedido) |
-| GET | `/api/orders/:id` | público | consulta status/pix do pedido; `items` traz `download_url` por mídia quando `paid` |
-| POST | `/api/orders/:id/proof/upload-url` | público | emite o token de upload direto pro Blob pro comprovante (só se o pedido estiver `awaiting_payment`) |
-| POST | `/api/orders/:id/proof` | público | cliente confirma o comprovante já enviado ao Blob (`url`, `content_type` em JSON); libera o pedido (`paid`) na hora |
+| POST | `/api/match` | público | cliente confirma a selfie já enviada ao Blob (`url`, `content_type` em JSON), busca no catálogo inteiro, salva e retorna os resultados (foto com marca d'água, ver seção "Marca d'água") e o `public_token` da busca (identificador opaco, o `id` serial interno nunca é exposto) |
+| GET | `/api/match/:token` | público | reconsulta os resultados de uma busca já feita, pelo `public_token` |
+| POST | `/api/orders` | público | cria o pedido (`media_ids` — lista de 1+ inteiros, todos do mesmo fotógrafo —, `buyer_name`, `buyer_phone`) e retorna o Pix copia-e-cola (`pix_code`) + QR (`qr_code_data_url`) do valor total, mais `items` (cada mídia do pedido) e o `public_token` (identificador opaco a usar nas próximas chamadas — o `id` serial interno nunca é exposto) |
+| GET | `/api/orders/:token` | público | consulta status/pix do pedido pelo `public_token`; `items` traz `download_url` por mídia quando `paid` |
+| POST | `/api/orders/:token/proof/upload-url` | público | emite o token de upload direto pro Blob pro comprovante (só se o pedido estiver `awaiting_payment`) |
+| POST | `/api/orders/:token/proof` | público | cliente confirma o comprovante já enviado ao Blob (`url`, `content_type` em JSON); libera o pedido (`paid`) na hora |
 
 ### Upload direto pro Blob (sem passar pela function)
 

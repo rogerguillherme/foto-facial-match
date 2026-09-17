@@ -8,6 +8,7 @@ const router = express.Router();
 const PROOF_MIME = /^(image\/(jpeg|png|webp)|application\/pdf)$/;
 const MAX_PROOF_BYTES = 10 * 1024 * 1024; // 10MB, é só um comprovante
 const MAX_ITEMS_PER_ORDER = 50; // sanidade, não é um limite de produto real
+const TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function pathnameOf(url) {
   return new URL(url).pathname.slice(1);
@@ -45,7 +46,7 @@ async function loadOrderItems(order) {
 
 function serializeOrder(order, items) {
   const out = {
-    order_id: order.id,
+    public_token: order.public_token,
     amount_cents: order.amount_cents,
     status: order.status,
     buyer_name: order.buyer_name,
@@ -125,14 +126,16 @@ router.post('/', async (req, res, next) => {
 
     const client = await db.pool.connect();
     let orderId;
+    let publicToken;
     try {
       await client.query('BEGIN');
       const inserted = await client.query(
         `INSERT INTO orders (buyer_name, buyer_phone, amount_cents, pix_code, status)
-         VALUES ($1, $2, $3, $4, 'awaiting_payment') RETURNING id`,
+         VALUES ($1, $2, $3, $4, 'awaiting_payment') RETURNING id, public_token`,
         [buyerName, buyerPhone, amountCents, generated.brCode]
       );
       orderId = inserted.rows[0].id;
+      publicToken = inserted.rows[0].public_token;
       for (const m of mediaRows) {
         await client.query(
           'INSERT INTO order_items (order_id, media_id, price_cents) VALUES ($1, $2, $3)',
@@ -150,7 +153,7 @@ router.post('/', async (req, res, next) => {
     const qrCodeDataUrl = await generated.toQrDataUrl().catch(() => null);
 
     res.status(201).json({
-      order_id: orderId,
+      public_token: publicToken,
       amount_cents: amountCents,
       status: 'awaiting_payment',
       pix_code: generated.brCode,
@@ -164,13 +167,13 @@ router.post('/', async (req, res, next) => {
 
 // Consulta o status do pedido (usado pra reabrir a tela depois de recarregar
 // a página, sem precisar refazer a busca por selfie).
-router.get('/:id', async (req, res, next) => {
+router.get('/:token', async (req, res, next) => {
   try {
-    const orderId = Number.parseInt(req.params.id, 10);
-    if (!Number.isInteger(orderId)) {
-      return res.status(400).json({ error: 'id inválido.' });
+    const token = req.params.token;
+    if (!TOKEN_RE.test(token)) {
+      return res.status(400).json({ error: 'token inválido.' });
     }
-    const order = await db.get('SELECT * FROM orders WHERE id = $1', [orderId]);
+    const order = await db.get('SELECT * FROM orders WHERE public_token = $1', [token]);
     if (!order) {
       return res.status(404).json({ error: 'Pedido não encontrado.' });
     }
@@ -183,13 +186,13 @@ router.get('/:id', async (req, res, next) => {
 
 // Emite o token de upload direto pro Blob pro comprovante (público, mas só
 // pra um pedido existente que ainda esteja aguardando pagamento).
-router.post('/:id/proof/upload-url', async (req, res, next) => {
+router.post('/:token/proof/upload-url', async (req, res, next) => {
   try {
-    const orderId = Number.parseInt(req.params.id, 10);
-    if (!Number.isInteger(orderId)) {
-      return res.status(400).json({ error: 'id inválido.' });
+    const token = req.params.token;
+    if (!TOKEN_RE.test(token)) {
+      return res.status(400).json({ error: 'token inválido.' });
     }
-    const order = await db.get('SELECT status FROM orders WHERE id = $1', [orderId]);
+    const order = await db.get('SELECT status FROM orders WHERE public_token = $1', [token]);
     if (!order) {
       return res.status(404).json({ error: 'Pedido não encontrado.' });
     }
@@ -222,13 +225,13 @@ router.post('/:id/proof/upload-url', async (req, res, next) => {
 // compra por fricção de aprovação manual/IA. Se algum dia isso mudar
 // (público maior, desconhecidos), o upgrade natural é: gateway Pix real com
 // webhook de confirmação, ou pelo menos revisão manual antes de liberar.
-router.post('/:id/proof', async (req, res, next) => {
+router.post('/:token/proof', async (req, res, next) => {
   try {
-    const orderId = Number.parseInt(req.params.id, 10);
-    if (!Number.isInteger(orderId)) {
-      return res.status(400).json({ error: 'id inválido.' });
+    const token = req.params.token;
+    if (!TOKEN_RE.test(token)) {
+      return res.status(400).json({ error: 'token inválido.' });
     }
-    const order = await db.get('SELECT * FROM orders WHERE id = $1', [orderId]);
+    const order = await db.get('SELECT * FROM orders WHERE public_token = $1', [token]);
     if (!order) {
       return res.status(404).json({ error: 'Pedido não encontrado.' });
     }
@@ -245,7 +248,7 @@ router.post('/:id/proof', async (req, res, next) => {
       });
     }
 
-    await db.query('UPDATE orders SET proof_path = $1, status = $2 WHERE id = $3', [proofUrl, 'paid', orderId]);
+    await db.query('UPDATE orders SET proof_path = $1, status = $2 WHERE id = $3', [proofUrl, 'paid', order.id]);
 
     const updatedOrder = { ...order, proof_path: proofUrl, status: 'paid' };
     const items = await loadOrderItems(updatedOrder);

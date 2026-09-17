@@ -111,6 +111,33 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
   `);
 
+  // `searches.id` e `orders.id` são seriais previsíveis (1, 2, 3...) e eram
+  // usados como identificador público nas URLs — dava pra um cliente
+  // adivinhar/varrer buscas e pedidos de outras pessoas trocando o número.
+  // `public_token` é o identificador opaco (UUID) que passa a ir pra URL;
+  // o `id` serial nunca mais é exposto (ver src/routes/match.js e orders.js).
+  // DEFAULT gen_random_uuid() cobre linhas novas; o UPDATE cobre as que já
+  // existiam antes desta coluna.
+  await db.query(`
+    ALTER TABLE searches ADD COLUMN IF NOT EXISTS public_token UUID;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS public_token UUID;
+  `);
+  // DEFAULT em statement próprio, fora do ADD COLUMN: se a coluna já existir
+  // de um run anterior, "ADD COLUMN IF NOT EXISTS ... DEFAULT" é um no-op e
+  // não aplica o default (surpresa do Postgres) — SET DEFAULT sempre aplica.
+  await db.query(`
+    ALTER TABLE searches ALTER COLUMN public_token SET DEFAULT gen_random_uuid();
+    ALTER TABLE orders ALTER COLUMN public_token SET DEFAULT gen_random_uuid();
+  `);
+  await db.query(`UPDATE searches SET public_token = gen_random_uuid() WHERE public_token IS NULL;`);
+  await db.query(`UPDATE orders SET public_token = gen_random_uuid() WHERE public_token IS NULL;`);
+  await db.query(`
+    ALTER TABLE searches ALTER COLUMN public_token SET NOT NULL;
+    ALTER TABLE orders ALTER COLUMN public_token SET NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_searches_public_token ON searches(public_token);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_public_token ON orders(public_token);
+  `);
+
   console.log('Schema Postgres criado/confirmado.');
   await db.pool.end();
 }

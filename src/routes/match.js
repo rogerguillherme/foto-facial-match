@@ -7,6 +7,7 @@ const router = express.Router();
 
 const ALLOWED_MIME = /^image\/(jpeg|png|webp)$/;
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB, é só uma selfie
+const TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function pathnameOf(url) {
   return new URL(url).pathname.slice(1);
@@ -86,9 +87,10 @@ router.post('/', async (req, res, next) => {
       return res.status(502).json({ error: 'Não foi possível processar a selfie agora. Tente novamente.' });
     }
 
-    const inserted = await db.get('INSERT INTO searches (selfie_storage_path) VALUES ($1) RETURNING id', [
-      selfieUrl,
-    ]);
+    const inserted = await db.get(
+      'INSERT INTO searches (selfie_storage_path) VALUES ($1) RETURNING id, public_token',
+      [selfieUrl]
+    );
     const searchId = inserted.id;
 
     for (const match of matches) {
@@ -100,7 +102,7 @@ router.post('/', async (req, res, next) => {
     }
 
     res.status(201).json({
-      search_id: searchId,
+      public_token: inserted.public_token,
       provider: faceRecognition.providerName,
       results: await loadResultsWithMedia(searchId),
     });
@@ -110,17 +112,17 @@ router.post('/', async (req, res, next) => {
 });
 
 // Listagem dos resultados de uma busca já feita (ex.: cliente volta depois).
-router.get('/:searchId', async (req, res, next) => {
+router.get('/:token', async (req, res, next) => {
   try {
-    const searchId = Number.parseInt(req.params.searchId, 10);
-    if (!Number.isInteger(searchId)) {
-      return res.status(400).json({ error: 'searchId inválido.' });
+    const token = req.params.token;
+    if (!TOKEN_RE.test(token)) {
+      return res.status(400).json({ error: 'token inválido.' });
     }
-    const search = await db.get('SELECT id FROM searches WHERE id = $1', [searchId]);
+    const search = await db.get('SELECT id, public_token FROM searches WHERE public_token = $1', [token]);
     if (!search) {
       return res.status(404).json({ error: 'Busca não encontrada.' });
     }
-    res.json({ search_id: searchId, results: await loadResultsWithMedia(searchId) });
+    res.json({ public_token: search.public_token, results: await loadResultsWithMedia(search.id) });
   } catch (e) {
     next(e);
   }

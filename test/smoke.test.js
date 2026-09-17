@@ -121,7 +121,7 @@ test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> com
   assert.ok(ownMatch, 'a própria foto enviada deveria aparecer nos resultados');
   assert.ok(ownMatch.similarity > 95);
 
-  const listRes = await fetch(`${baseUrl}/api/match/${matchBody.search_id}`);
+  const listRes = await fetch(`${baseUrl}/api/match/${matchBody.public_token}`);
   assert.equal(listRes.status, 200);
   const listBody = await listRes.json();
   assert.equal(listBody.results.length, matchBody.results.length);
@@ -142,7 +142,7 @@ test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> com
   assert.equal(order.items.length, 1);
   assert.equal(order.items[0].media_id, media.id);
 
-  const getOrderRes = await fetch(`${baseUrl}/api/orders/${order.order_id}`);
+  const getOrderRes = await fetch(`${baseUrl}/api/orders/${order.public_token}`);
   assert.equal(getOrderRes.status, 200);
   const fetchedOrder = await getOrderRes.json();
   assert.equal(fetchedOrder.status, 'awaiting_payment');
@@ -152,9 +152,9 @@ test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> com
     `proofs/${Date.now()}-comprovante.png`,
     Buffer.from('comprovante fake'),
     'image/png',
-    `${baseUrl}/api/orders/${order.order_id}/proof/upload-url`
+    `${baseUrl}/api/orders/${order.public_token}/proof/upload-url`
   );
-  const proofRes = await fetch(`${baseUrl}/api/orders/${order.order_id}/proof`, {
+  const proofRes = await fetch(`${baseUrl}/api/orders/${order.public_token}/proof`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url: proofUrl, content_type: 'image/png' }),
@@ -168,7 +168,7 @@ test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> com
   // Reenviar comprovante num pedido já pago deve ser rejeitado (evita
   // sobrescrever o comprovante original sem necessidade) — já na emissão
   // do token de upload, antes de gastar upload nenhum.
-  const secondProofUploadUrlRes = await fetch(`${baseUrl}/api/orders/${order.order_id}/proof/upload-url`, {
+  const secondProofUploadUrlRes = await fetch(`${baseUrl}/api/orders/${order.public_token}/proof/upload-url`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type: 'blob.generate-presigned-url', payload: { pathname: 'proofs/de-novo.png', multipart: false, clientPayload: null } }),
@@ -319,9 +319,9 @@ test('pedido com várias mídias: busca por selfie encontra as duas, compra as d
     `proofs/${Date.now()}-comprovante-multi.png`,
     Buffer.from('comprovante fake multi'),
     'image/png',
-    `${baseUrl}/api/orders/${order.order_id}/proof/upload-url`
+    `${baseUrl}/api/orders/${order.public_token}/proof/upload-url`
   );
-  const proofRes = await fetch(`${baseUrl}/api/orders/${order.order_id}/proof`, {
+  const proofRes = await fetch(`${baseUrl}/api/orders/${order.public_token}/proof`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url: proofUrl, content_type: 'image/png' }),
@@ -334,8 +334,8 @@ test('pedido com várias mídias: busca por selfie encontra as duas, compra as d
   assert.ok(downloadUrls.every(Boolean), 'as duas mídias deveriam ter download_url');
   assert.notEqual(downloadUrls[0], downloadUrls[1]);
 
-  // GET /api/orders/:id depois de pago também deve trazer as duas.
-  const getPaidRes = await fetch(`${baseUrl}/api/orders/${order.order_id}`);
+  // GET /api/orders/:token depois de pago também deve trazer as duas.
+  const getPaidRes = await fetch(`${baseUrl}/api/orders/${order.public_token}`);
   const getPaidBody = await getPaidRes.json();
   assert.equal(getPaidBody.items.length, 2);
 });

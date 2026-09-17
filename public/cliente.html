@@ -97,7 +97,7 @@ selfieForm.addEventListener('submit', async (e) => {
       handleUploadUrl: '/api/match/upload-url',
     });
     const data = await api('/api/match', { method: 'POST', body: { url: blob.url, content_type: file.type } });
-    showMsg(searchMsg, `Busca #${data.search_id} concluída.`, false);
+    showMsg(searchMsg, 'Busca concluída.', false);
     renderResults(data.results);
   } catch (err) {
     showMsg(searchMsg, err.message, true);
@@ -250,9 +250,9 @@ function renderPixStep(order) {
       const { uploadPresigned } = await import('https://esm.sh/@vercel/blob/client');
       const blob = await uploadPresigned(`proofs/${Date.now()}-${file.name}`, file, {
         access: 'public', // exigido pelo SDK como checagem client-side; o store já é público
-        handleUploadUrl: `/api/orders/${order.order_id}/proof/upload-url`,
+        handleUploadUrl: `/api/orders/${order.public_token}/proof/upload-url`,
       });
-      const updated = await api(`/api/orders/${order.order_id}/proof`, {
+      const updated = await api(`/api/orders/${order.public_token}/proof`, {
         method: 'POST',
         body: { url: blob.url, content_type: file.type },
       });
