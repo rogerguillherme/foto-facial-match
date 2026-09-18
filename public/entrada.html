@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encontre suas fotos — Foto Facial Match</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="entrada-hero">
+  <div id="heroLoading" class="entrada-hero-inner">
+    <p class="msg">Carregando...</p>
+  </div>
+  <div id="heroError" class="entrada-hero-inner hidden">
+    <p class="msg error" id="heroErrorMsg"></p>
+  </div>
+  <div id="heroContent" class="entrada-hero-inner hidden">
+    <div id="avatar" class="entrada-avatar"></div>
+    <h1 id="photographerTitle"></h1>
+    <p class="entrada-sub">Preencha seus dados para ver as fotos em que você aparece.</p>
+  </div>
+</div>
+
+<main>
+  <div class="card hidden" id="leadCard">
+    <form id="leadForm">
+      <label for="leadName">Nome completo</label>
+      <input id="leadName" type="text" required autocomplete="name">
+      <label for="leadCpf">CPF</label>
+      <input id="leadCpf" type="text" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" required autocomplete="off">
+      <button type="submit" id="leadBtn">Ver minhas fotos</button>
+    </form>
+    <p id="leadMsg" class="msg"></p>
+  </div>
+</main>
+
+<script src="/api.js"></script>
+<script>
+const heroLoading = document.getElementById('heroLoading');
+const heroError = document.getElementById('heroError');
+const heroErrorMsg = document.getElementById('heroErrorMsg');
+const heroContent = document.getElementById('heroContent');
+const avatarEl = document.getElementById('avatar');
+const photographerTitle = document.getElementById('photographerTitle');
+const leadCard = document.getElementById('leadCard');
+const leadForm = document.getElementById('leadForm');
+const leadCpf = document.getElementById('leadCpf');
+const leadBtn = document.getElementById('leadBtn');
+const leadMsg = document.getElementById('leadMsg');
+
+function showMsg(el, text, isError) {
+  el.textContent = text;
+  el.className = 'msg ' + (isError ? 'error' : 'ok');
+}
+
+function showHeroError(text) {
+  heroLoading.classList.add('hidden');
+  heroContent.classList.add('hidden');
+  heroErrorMsg.textContent = text;
+  heroError.classList.remove('hidden');
+}
+
+function escapeAttr(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function initials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
+
+// Máscara simples de CPF (000.000.000-00) enquanto digita, sem lib.
+function formatCpf(value) {
+  const digits = value.replace(/\D/g, '').slice(0, 11);
+  return digits
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+}
+
+leadCpf.addEventListener('input', () => {
+  leadCpf.value = formatCpf(leadCpf.value);
+});
+
+const params = new URLSearchParams(location.search);
+const photographerId = params.get('photographer_id');
+
+let currentPhotographerId = null;
+
+async function loadPhotographer() {
+  if (!photographerId || !/^\d+$/.test(photographerId)) {
+    showHeroError('Link inválido: fotógrafo não especificado.');
+    return;
+  }
+  try {
+    const photographer = await api(`/api/photographers/${photographerId}/public`);
+    currentPhotographerId = photographer.id;
+    photographerTitle.textContent = `Fotógrafo ${photographer.name}`;
+    if (photographer.profile_photo_url) {
+      avatarEl.innerHTML = `<img src="${escapeAttr(photographer.profile_photo_url)}" alt="${escapeAttr(photographer.name)}">`;
+    } else {
+      avatarEl.textContent = initials(photographer.name);
+    }
+    heroLoading.classList.add('hidden');
+    heroContent.classList.remove('hidden');
+    leadCard.classList.remove('hidden');
+  } catch (err) {
+    showHeroError(err.message);
+  }
+}
+
+leadForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  leadBtn.disabled = true;
+  showMsg(leadMsg, 'Enviando...', false);
+  try {
+    await api('/api/leads', {
+      method: 'POST',
+      body: {
+        photographer_id: currentPhotographerId,
+        name: document.getElementById('leadName').value.trim(),
+        cpf: leadCpf.value.replace(/\D/g, ''),
+      },
+    });
+    location.href = '/cliente.html';
+  } catch (err) {
+    showMsg(leadMsg, err.message, true);
+    leadBtn.disabled = false;
+  }
+});
+
+loadPhotographer();
+</script>
+</body>
+</html>

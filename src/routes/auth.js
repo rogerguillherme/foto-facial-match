@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
 const config = require('../config');
+const storage = require('../services/storage');
 const { normalizePixKey } = require('../services/pixKey');
 const { requirePhotographer } = require('../middleware/auth');
 
@@ -67,13 +68,14 @@ router.post('/login', async (req, res, next) => {
 router.get('/me', requirePhotographer, async (req, res, next) => {
   try {
     const photographer = await db.get(
-      'SELECT id, name, email, pix_key, pix_key_type, price_photo_cents, price_video_cents FROM photographers WHERE id = $1',
+      'SELECT id, name, email, pix_key, pix_key_type, price_photo_cents, price_video_cents, profile_photo_path FROM photographers WHERE id = $1',
       [req.photographerId]
     );
     if (!photographer) {
       return res.status(404).json({ error: 'Fotógrafo não encontrado.' });
     }
-    res.json(photographer);
+    const { profile_photo_path, ...rest } = photographer;
+    res.json({ ...rest, profile_photo_url: storage.publicUrl(profile_photo_path) });
   } catch (e) {
     next(e);
   }
@@ -126,6 +128,46 @@ router.put('/pricing', requirePhotographer, async (req, res, next) => {
       [pricePhotoCents, priceVideoCents, req.photographerId]
     );
     res.json({ price_photo_cents: pricePhotoCents, price_video_cents: priceVideoCents });
+  } catch (e) {
+    next(e);
+  }
+});
+
+const ALLOWED_PROFILE_PHOTO_MIME = /^image\/(jpeg|png|webp)$/;
+const MAX_PROFILE_PHOTO_BYTES = 10 * 1024 * 1024; // 10MB
+
+// Emite o token de upload direto pro Blob pra foto de perfil do fotógrafo,
+// mesmo padrão de POST /api/media/upload-url (ver src/routes/media.js).
+router.post('/profile-photo/upload-url', requirePhotographer, async (req, res) => {
+  await storage.handleClientUpload(req, res, async (pathname) => {
+    if (!pathname.startsWith('profile-photos/')) {
+      throw new Error('Caminho de upload inválido.');
+    }
+    return {
+      allowedContentTypes: ['image/jpeg', 'image/png', 'image/webp'],
+      maximumSizeInBytes: MAX_PROFILE_PHOTO_BYTES,
+    };
+  });
+});
+
+// Registra a foto de perfil que o fotógrafo acabou de subir direto pro Blob
+// (mostrada no painel dele e na página pública de captura de lead).
+router.post('/profile-photo', requirePhotographer, async (req, res, next) => {
+  try {
+    const blobUrl = typeof req.body?.url === 'string' ? req.body.url : '';
+    const contentType = typeof req.body?.content_type === 'string' ? req.body.content_type : '';
+
+    if (!blobUrl || !storage.isOwnBlobUrl(blobUrl) || !ALLOWED_PROFILE_PHOTO_MIME.test(contentType)) {
+      return res.status(400).json({
+        error: 'url (do upload direto ao Blob) e content_type (JPEG, PNG ou WEBP) são obrigatórios e válidos.',
+      });
+    }
+    if (!new URL(blobUrl).pathname.slice(1).startsWith('profile-photos/')) {
+      return res.status(400).json({ error: 'URL de foto de perfil inválida.' });
+    }
+
+    await db.query('UPDATE photographers SET profile_photo_path = $1 WHERE id = $2', [blobUrl, req.photographerId]);
+    res.json({ profile_photo_url: storage.publicUrl(blobUrl) });
   } catch (e) {
     next(e);
   }

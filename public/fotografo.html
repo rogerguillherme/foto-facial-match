@@ -37,6 +37,17 @@
 
   <section id="appSection" class="hidden">
     <div class="card">
+      <h2>Foto de perfil</h2>
+      <div id="profilePhotoPreview" class="entrada-avatar" style="margin:0 0 1rem;"></div>
+      <form id="profilePhotoForm">
+        <label for="profilePhotoFile">Nova foto (JPEG, PNG ou WEBP)</label>
+        <input id="profilePhotoFile" type="file" accept="image/jpeg,image/png,image/webp" required>
+        <button type="submit" id="profilePhotoBtn">Salvar foto de perfil</button>
+      </form>
+      <p id="profilePhotoMsg" class="msg"></p>
+    </div>
+
+    <div class="card">
       <h2>Chave Pix (recebimento)</h2>
       <form id="pixForm">
         <label for="pixKeyType">Tipo da chave</label>
@@ -122,6 +133,53 @@ const pricingForm = document.getElementById('pricingForm');
 const pricingMsg = document.getElementById('pricingMsg');
 const pricePhotoInput = document.getElementById('pricePhoto');
 const priceVideoInput = document.getElementById('priceVideo');
+const profilePhotoPreview = document.getElementById('profilePhotoPreview');
+const profilePhotoForm = document.getElementById('profilePhotoForm');
+const profilePhotoBtn = document.getElementById('profilePhotoBtn');
+const profilePhotoMsg = document.getElementById('profilePhotoMsg');
+
+profilePhotoForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const file = document.getElementById('profilePhotoFile').files[0];
+  if (!file) return;
+  profilePhotoBtn.disabled = true;
+  showMsg(profilePhotoMsg, 'Enviando...', false);
+  try {
+    // Mesmo fluxo de upload direto pro Blob usado no comprovante e no
+    // catálogo (ver uploadOneFile abaixo) — evita o limite de corpo das
+    // serverless functions.
+    const { uploadPresigned } = await import('https://esm.sh/@vercel/blob/client');
+    const blob = await uploadPresigned(`profile-photos/${Date.now()}-${file.name}`, file, {
+      access: 'public', // exigido pelo SDK como checagem client-side; o store já é público
+      handleUploadUrl: '/api/auth/profile-photo/upload-url',
+      headers: { Authorization: 'Bearer ' + getToken() },
+    });
+    const saved = await api('/api/auth/profile-photo', {
+      method: 'POST',
+      body: { url: blob.url, content_type: file.type },
+      auth: true,
+    });
+    renderProfilePhotoPreview(null, saved.profile_photo_url);
+    showMsg(profilePhotoMsg, 'Foto de perfil salva!', false);
+    profilePhotoForm.reset();
+  } catch (err) {
+    showMsg(profilePhotoMsg, err.message, true);
+  } finally {
+    profilePhotoBtn.disabled = false;
+  }
+});
+
+function initials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
+
+function renderProfilePhotoPreview(name, url) {
+  profilePhotoPreview.innerHTML = url
+    ? `<img src="${url}" alt="${name || 'foto de perfil'}">`
+    : initials(name);
+}
 
 async function loadPixKey() {
   try {
@@ -130,6 +188,7 @@ async function loadPixKey() {
     pixKeyTypeInput.value = me.pix_key_type || '';
     pricePhotoInput.value = (me.price_photo_cents / 100).toFixed(2);
     priceVideoInput.value = (me.price_video_cents / 100).toFixed(2);
+    renderProfilePhotoPreview(me.name, me.profile_photo_url);
   } catch (err) {
     showMsg(pixMsg, err.message, true);
   }

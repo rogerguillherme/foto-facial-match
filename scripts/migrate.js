@@ -138,6 +138,27 @@ async function migrate() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_public_token ON orders(public_token);
   `);
 
+  // Foto de perfil do fotógrafo (mostrada na página pública de captura de
+  // lead, junto com o nome). Nullable: só passa a existir quando o fotógrafo
+  // sobe uma (mesmo padrão de `media.preview_storage_path`).
+  await db.query(`
+    ALTER TABLE photographers ADD COLUMN IF NOT EXISTS profile_photo_path TEXT;
+  `);
+
+  // Página pública de entrada pede nome+CPF antes do cliente poder buscar as
+  // fotos por selfie — captação de lead pra follow-up comercial do fotógrafo,
+  // mesmo que a pessoa nunca chegue a comprar nada.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS leads (
+      id SERIAL PRIMARY KEY,
+      photographer_id INTEGER NOT NULL REFERENCES photographers(id),
+      name TEXT NOT NULL,
+      cpf TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_leads_photographer_id ON leads(photographer_id);
+  `);
+
   console.log('Schema Postgres criado/confirmado.');
   await db.pool.end();
 }

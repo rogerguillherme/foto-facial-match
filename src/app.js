@@ -4,6 +4,8 @@ const authRoutes = require('./routes/auth');
 const mediaRoutes = require('./routes/media');
 const matchRoutes = require('./routes/match');
 const orderRoutes = require('./routes/orders');
+const photographerRoutes = require('./routes/photographers');
+const leadRoutes = require('./routes/leads');
 
 const app = express();
 
@@ -16,6 +18,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/match', matchRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/photographers', photographerRoutes);
+app.use('/api/leads', leadRoutes);
 
 // 404 padrão
 app.use((req, res) => res.status(404).json({ error: 'Rota não encontrada.' }));
