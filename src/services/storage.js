@@ -93,4 +93,17 @@ async function putPreview(mediaId, buffer) {
   });
 }
 
-module.exports = { handleClientUpload, isOwnBlobUrl, publicUrl, putPreview };
+// Sobe a versão JPEG convertida de um upload original HEIC/HEIF (ver
+// conversão em src/routes/media.js). Vai pro mesmo prefixo dos uploads
+// originais ("photos/") porque este blob PASSA a ser o `storage_path` da
+// mídia — substitui a URL HEIC original, que fica órfã no Blob (sem
+// problema, não precisa limpar).
+async function putConverted(mediaId, buffer) {
+  return put(`photos/${mediaId}.jpg`, buffer, {
+    access: 'public',
+    contentType: 'image/jpeg',
+    addRandomSuffix: true,
+  });
+}
+
+module.exports = { handleClientUpload, isOwnBlobUrl, publicUrl, putPreview, putConverted };

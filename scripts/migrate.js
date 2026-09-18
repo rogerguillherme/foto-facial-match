@@ -159,6 +159,15 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_leads_photographer_id ON leads(photographer_id);
   `);
 
+  // CPF do comprador: além do public_token na URL (que se perde se o cliente
+  // não guardar o link), o pedido agora fica "logável" por CPF (GET
+  // /api/orders/by-cpf/:cpf) independente do nome bater exatamente. Nullable:
+  // pedidos criados antes desta coluna existir ficam sem CPF.
+  await db.query(`
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS buyer_cpf TEXT;
+    CREATE INDEX IF NOT EXISTS idx_orders_buyer_cpf ON orders(buyer_cpf);
+  `);
+
   console.log('Schema Postgres criado/confirmado.');
   await db.pool.end();
 }

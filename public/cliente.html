@@ -17,6 +17,16 @@
       <button type="submit" id="searchBtn">Buscar minhas fotos</button>
     </form>
     <p id="searchMsg" class="msg"></p>
+    <button type="button" id="showCpfSearchBtn" class="link">Já comprei antes? Ver minhas compras</button>
+  </div>
+
+  <div class="card hidden" id="cpfCard">
+    <h2>Buscar minhas compras</h2>
+    <label for="cpfSearchInput">CPF</label>
+    <input id="cpfSearchInput" type="text" inputmode="numeric" placeholder="000.000.000-00" maxlength="14">
+    <button type="button" id="cpfSearchBtn">Buscar</button>
+    <p id="cpfSearchMsg" class="msg"></p>
+    <div id="cpfResults"></div>
   </div>
 
   <div class="card hidden" id="resultsCard">
@@ -61,6 +71,17 @@ function showMsg(el, text, isError) {
 
 function formatCents(cents) {
   return (cents / 100).toFixed(2).replace('.', ',');
+}
+
+// Máscara simples de CPF (000.000.000-00) enquanto digita, sem lib.
+// Mesma função de public/entrada.html — duplicada de propósito (páginas
+// standalone, sem módulo compartilhado, mesmo padrão de escapeAttr/initials).
+function formatCpf(value) {
+  const digits = value.replace(/\D/g, '').slice(0, 11);
+  return digits
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
 }
 
 // Seleção do cliente vive só no estado da página (sem carrinho persistente
@@ -197,7 +218,6 @@ function renderResultItem(r) {
     <div class="info">
       <div>${escapeAttr(r.event_name) || '(sem evento)'}</div>
       <div class="price">R$ ${formatCents(r.price_cents)}</div>
-      <div class="status">similaridade: ${r.similarity}%</div>
       <button type="button" class="cart-toggle" data-media-id="${r.media_id}" data-price-cents="${r.price_cents}" data-type="${r.type}">Adicionar ao carrinho</button>
     </div>
   </div>`;
@@ -222,22 +242,27 @@ function renderCheckoutForm() {
       <input type="text" class="buyer-name" required>
       <label>Telefone</label>
       <input type="tel" class="buyer-phone" placeholder="(11) 99999-9999" required>
+      <label>CPF</label>
+      <input type="text" class="buyer-cpf" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" required>
       <button type="submit">Gerar Pix</button>
     </form>
     <p class="msg"></p>`;
   const form = checkoutBody.querySelector('.buy-form');
   const msg = checkoutBody.querySelector('.msg');
+  const cpfInput = checkoutBody.querySelector('.buyer-cpf');
+  cpfInput.addEventListener('input', () => { cpfInput.value = formatCpf(cpfInput.value); });
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const buyer_name = checkoutBody.querySelector('.buyer-name').value.trim();
     const buyer_phone = checkoutBody.querySelector('.buyer-phone').value.trim();
+    const buyer_cpf = cpfInput.value.replace(/\D/g, '');
     const submitBtn = form.querySelector('button');
     submitBtn.disabled = true;
     showMsg(msg, 'Gerando Pix...', false);
     try {
       const order = await api('/api/orders', {
         method: 'POST',
-        body: { media_ids: [...selectedMedia.keys()], buyer_name, buyer_phone },
+        body: { media_ids: [...selectedMedia.keys()], buyer_name, buyer_phone, buyer_cpf },
       });
       renderPixStep(order);
     } catch (err) {
@@ -247,8 +272,10 @@ function renderCheckoutForm() {
   });
 }
 
-function renderPixStep(order) {
-  checkoutBody.innerHTML = `
+// container é opcional pra permitir reusar este passo fora do checkout
+// principal (ex.: pedido pendente reaberto pela busca por CPF, Tarefa 4).
+function renderPixStep(order, container = checkoutBody) {
+  container.innerHTML = `
     <div class="pix-box">
       <p>Pague <strong>R$ ${formatCents(order.amount_cents)}</strong> com o Pix copia-e-cola abaixo (${order.items.length} item(ns)):</p>
       ${order.qr_code_data_url ? `<img class="pix-qr" src="${order.qr_code_data_url}" alt="QR code Pix">` : ''}
@@ -259,13 +286,13 @@ function renderPixStep(order) {
       <button type="button" class="confirm-btn">Já paguei, enviar comprovante</button>
       <p class="msg"></p>
     </div>`;
-  checkoutBody.querySelector('.copy-btn').addEventListener('click', () => {
+  container.querySelector('.copy-btn').addEventListener('click', () => {
     navigator.clipboard?.writeText(order.pix_code).catch(() => {});
   });
-  const confirmBtn = checkoutBody.querySelector('.confirm-btn');
-  const msg = checkoutBody.querySelector('.msg');
+  const confirmBtn = container.querySelector('.confirm-btn');
+  const msg = container.querySelector('.msg');
   confirmBtn.addEventListener('click', async () => {
-    const file = checkoutBody.querySelector('.proof-file').files[0];
+    const file = container.querySelector('.proof-file').files[0];
     if (!file) {
       showMsg(msg, 'Selecione o arquivo do comprovante.', true);
       return;
@@ -284,7 +311,7 @@ function renderPixStep(order) {
         method: 'POST',
         body: { url: blob.url, content_type: file.type },
       });
-      renderPaidStep(updated);
+      renderPaidStep(updated, container);
     } catch (err) {
       showMsg(msg, err.message, true);
       confirmBtn.disabled = false;
@@ -292,14 +319,84 @@ function renderPixStep(order) {
   });
 }
 
-function renderPaidStep(order) {
-  const links = order.items.map((item, i) =>
-    `<a class="download-link" href="${item.download_url}" download target="_blank" rel="noopener">Baixar item ${i + 1} (${item.type === 'video' ? 'vídeo' : 'foto'})</a>`
-  ).join('');
-  checkoutBody.innerHTML = `
-    <p class="msg ok">Pagamento confirmado! ${order.items.length} item(ns) liberado(s).</p>
-    ${links}`;
+// Um item comprado: link "Baixar" (existente) + botão "Visualizar" que abre
+// a mesma imagem no lightbox já usado nos resultados da selfie, ou em nova
+// aba pra vídeo (lightbox aqui só lida com <img>).
+function renderPaidItemHtml(item, i) {
+  const url = escapeAttr(item.download_url);
+  const label = item.type === 'video' ? 'vídeo' : 'foto';
+  return `<div class="top-row">
+    <a class="download-link" href="${url}" download target="_blank" rel="noopener">Baixar item ${i + 1} (${label})</a>
+    <button type="button" class="view-btn link" data-url="${url}" data-type="${escapeAttr(item.type)}">Visualizar</button>
+  </div>`;
 }
+
+function wireViewButtons(container) {
+  container.querySelectorAll('.view-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.type === 'video') {
+        window.open(btn.dataset.url, '_blank', 'noopener');
+      } else {
+        openLightbox(btn.dataset.url, 'Foto comprada');
+      }
+    });
+  });
+}
+
+function renderPaidStep(order, container = checkoutBody) {
+  container.innerHTML = `
+    <p class="msg ok">Pagamento confirmado! ${order.items.length} item(ns) liberado(s).</p>
+    ${order.items.map(renderPaidItemHtml).join('')}`;
+  wireViewButtons(container);
+}
+
+// Tarefa 4: cliente reabre compras antigas só com o CPF, sem link/token.
+const showCpfSearchBtn = document.getElementById('showCpfSearchBtn');
+const cpfCard = document.getElementById('cpfCard');
+const cpfSearchInput = document.getElementById('cpfSearchInput');
+const cpfSearchBtn = document.getElementById('cpfSearchBtn');
+const cpfSearchMsg = document.getElementById('cpfSearchMsg');
+const cpfResults = document.getElementById('cpfResults');
+
+cpfSearchInput.addEventListener('input', () => { cpfSearchInput.value = formatCpf(cpfSearchInput.value); });
+showCpfSearchBtn.addEventListener('click', () => cpfCard.classList.toggle('hidden'));
+
+const ORDER_STATUS_LABELS = { awaiting_payment: 'Aguardando pagamento', paid: 'Pago' };
+
+cpfSearchBtn.addEventListener('click', async () => {
+  const cpf = cpfSearchInput.value.replace(/\D/g, '');
+  cpfSearchBtn.disabled = true;
+  cpfResults.innerHTML = '';
+  showMsg(cpfSearchMsg, 'Buscando...', false);
+  try {
+    const data = await api(`/api/orders/by-cpf/${cpf}`);
+    if (!data.orders.length) {
+      showMsg(cpfSearchMsg, 'Nenhuma compra encontrada com esse CPF.', false);
+      return;
+    }
+    showMsg(cpfSearchMsg, `${data.orders.length} pedido(s) encontrado(s).`, false);
+    data.orders.forEach((order) => {
+      const box = document.createElement('div');
+      box.className = 'card';
+      const statusLabel = ORDER_STATUS_LABELS[order.status] || order.status;
+      const header = document.createElement('p');
+      header.innerHTML = `<strong>${escapeAttr(statusLabel)}</strong> — R$ ${formatCents(order.amount_cents)}`;
+      box.appendChild(header);
+      const body = document.createElement('div');
+      box.appendChild(body);
+      cpfResults.appendChild(box);
+      if (order.status === 'paid') {
+        renderPaidStep(order, body);
+      } else {
+        renderPixStep(order, body);
+      }
+    });
+  } catch (err) {
+    showMsg(cpfSearchMsg, err.message, true);
+  } finally {
+    cpfSearchBtn.disabled = false;
+  }
+});
 </script>
 </body>
 </html>

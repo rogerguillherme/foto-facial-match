@@ -1,4 +1,6 @@
 const express = require('express');
+const sharp = require('sharp');
+const heicConvert = require('heic-convert');
 const db = require('../db');
 const storage = require('../services/storage');
 const faceRecognition = require('../services/faceRecognition');
@@ -7,11 +9,42 @@ const { requirePhotographer } = require('../middleware/auth');
 
 const router = express.Router();
 
-const ALLOWED_MIME = /^(image\/(jpeg|png|webp)|video\/(mp4|quicktime))$/;
+const ALLOWED_MIME = /^(image\/(jpeg|png|webp|heic|heif)|video\/(mp4|quicktime))$/;
 const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+const HEIC_EXT_RE = /\.hei[cf]$/i;
 
 function pathnameOf(url) {
   return new URL(url).pathname.slice(1); // sem a barra inicial
+}
+
+// Fotos de iPhone são HEIC/HEIF por padrão. O `sharp` instalado não decodifica
+// HEIC (só suporta AVIF em sharp.format.heif) e o Rekognition não aceita HEIC
+// como input, então precisa converter pra JPEG antes de qualquer
+// processamento (indexação de rosto, marca d'água, storage_path final).
+// Detecta por content_type OU pelo que o sharp reporta ao ler metadata —
+// testado com um HEIC real (não só documentação): `sharp(buffer).metadata()`
+// NÃO lança erro em HEIC, ele lê o container/dimensões normalmente e retorna
+// `format: 'heif'`; quem falha é a decodificação de pixel de verdade
+// (`sharp(buffer).jpeg().toBuffer()` -> "Support for this compression format
+// has not been built in"). Por isso o sinal é `format === 'heif'`, e não uma
+// exceção — só cai no catch (trata como HEIC também) se o próprio sharp não
+// conseguir nem ler o arquivo, outro jeito de "genérico" dar errado. Cobre o
+// caso do Safari mobile mandando um content_type genérico/vazio pra HEIC
+// mesmo depois do fallback por extensão feito no chamador. `heic-convert`
+// decodifica via WASM (libheif-js), sem binário nativo, então funciona no
+// runtime serverless da Vercel igual ao `sharp` já usado aqui.
+async function convertHeicIfNeeded(buffer, contentType) {
+  let needsConversion = /^image\/(heic|heif)$/i.test(contentType);
+  if (!needsConversion) {
+    try {
+      const meta = await sharp(buffer).metadata();
+      needsConversion = meta.format === 'heif';
+    } catch {
+      needsConversion = true;
+    }
+  }
+  if (!needsConversion) return null;
+  return heicConvert({ buffer, format: 'JPEG', quality: 0.92 });
 }
 
 // Emite o token de upload direto pro Blob (o navegador do fotógrafo fala
@@ -23,7 +56,7 @@ router.post('/upload-url', requirePhotographer, async (req, res) => {
       throw new Error('Caminho de upload inválido.');
     }
     return {
-      allowedContentTypes: ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/quicktime'],
+      allowedContentTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'video/mp4', 'video/quicktime'],
       maximumSizeInBytes: MAX_SIZE_BYTES,
     };
   });
@@ -35,9 +68,17 @@ router.post('/upload-url', requirePhotographer, async (req, res) => {
 router.post('/', requirePhotographer, async (req, res, next) => {
   try {
     const blobUrl = typeof req.body?.url === 'string' ? req.body.url : '';
-    const contentType = typeof req.body?.content_type === 'string' ? req.body.content_type : '';
+    let contentType = typeof req.body?.content_type === 'string' ? req.body.content_type : '';
     const originalName = typeof req.body?.original_name === 'string' ? req.body.original_name.trim().slice(0, 200) : '';
     const eventName = typeof req.body?.event_name === 'string' ? req.body.event_name.slice(0, 200) : null;
+
+    // Safari mobile às vezes manda um content_type genérico/vazio pra HEIC.
+    // Se a extensão do arquivo original indica HEIC/HEIF, trata como tal
+    // mesmo que o content_type não bata (mesmo fallback por extensão do
+    // <input accept> em fotografo.html).
+    if (!ALLOWED_MIME.test(contentType) && HEIC_EXT_RE.test(originalName)) {
+      contentType = 'image/heic';
+    }
 
     if (!blobUrl || !storage.isOwnBlobUrl(blobUrl) || !ALLOWED_MIME.test(contentType) || !originalName) {
       return res.status(400).json({
@@ -67,6 +108,7 @@ router.post('/', requirePhotographer, async (req, res, next) => {
     const mediaId = inserted.id;
 
     let faceStatus = 'pending';
+    let storagePath = blobUrl; // pode virar a URL do JPEG convertido se a foto for HEIC/HEIF
     if (type === 'photo') {
       try {
         // Requisição de SAÍDA pro Blob (baixar os bytes pra indexar o
@@ -74,7 +116,20 @@ router.post('/', requirePhotographer, async (req, res, next) => {
         // requisição de ENTRADA das serverless functions.
         const resp = await fetch(blobUrl);
         if (!resp.ok) throw new Error(`download do Blob falhou (status ${resp.status})`);
-        const buffer = Buffer.from(await resp.arrayBuffer());
+        let buffer = Buffer.from(await resp.arrayBuffer());
+
+        const converted = await convertHeicIfNeeded(buffer, contentType);
+        if (converted) {
+          buffer = converted;
+          // HEIC não abre em <img> na maioria dos navegadores: mesmo aceito,
+          // o cliente veria "prévia indisponível" e o comprador não
+          // conseguiria abrir o arquivo baixado. O JPEG convertido substitui
+          // o storage_path (a URL HEIC original fica órfã no Blob).
+          const convertedBlob = await storage.putConverted(mediaId, buffer);
+          storagePath = convertedBlob.url;
+          await db.query('UPDATE media SET storage_path = $1 WHERE id = $2', [storagePath, mediaId]);
+        }
+
         faceStatus = await faceRecognition.indexPhotoFace(mediaId, buffer);
 
         try {
@@ -110,7 +165,7 @@ router.post('/', requirePhotographer, async (req, res, next) => {
       type,
       event_name: eventName,
       price_cents: priceCents,
-      url: storage.publicUrl(blobUrl),
+      url: storage.publicUrl(storagePath),
       face_status: faceStatus,
     });
   } catch (e) {

@@ -11,15 +11,27 @@ function escapeXml(text) {
 
 function buildWatermarkSvg(width, height, text) {
   const label = escapeXml((text || 'PREVIEW').slice(0, 40));
+  const cx = width / 2;
+  const cy = height / 2;
+  // Marca central grande e mais transparente, além do padrão repetido menor
+  // e mais opaco (mesma combinação usada por banco de imagens tipo
+  // Shutterstock): sozinho, o padrão pequeno dá pra "aparar" um recorte livre
+  // de marca se o espaçamento for grande; a marca central atravessando o
+  // meio da foto dificulta muito mais um recorte útil, porque cobre a área
+  // onde normalmente está o assunto principal (rosto/corpo).
+  const centerFontSize = Math.max(40, Math.round(Math.min(width, height) * 0.16));
   return `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <pattern id="wm" width="320" height="160" patternUnits="userSpaceOnUse" patternTransform="rotate(-30)">
-          <text x="0" y="90" font-size="34" font-family="sans-serif" font-weight="bold"
-                fill="#ffffff" fill-opacity="0.35">${label}</text>
+        <pattern id="wm" width="200" height="100" patternUnits="userSpaceOnUse" patternTransform="rotate(-30)">
+          <text x="0" y="60" font-size="28" font-family="sans-serif" font-weight="bold"
+                fill="#ffffff" fill-opacity="0.52">${label}</text>
         </pattern>
       </defs>
       <rect width="100%" height="100%" fill="url(#wm)" />
+      <text x="${cx}" y="${cy}" font-size="${centerFontSize}" font-family="sans-serif" font-weight="bold"
+            fill="#ffffff" fill-opacity="0.22" text-anchor="middle" dominant-baseline="middle"
+            transform="rotate(-30 ${cx} ${cy})">${label}</text>
     </svg>
   `;
 }

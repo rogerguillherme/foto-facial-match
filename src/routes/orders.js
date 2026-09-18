@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const storage = require('../services/storage');
 const pix = require('../services/pix');
+const { isValidCpf } = require('../services/pixKey');
 
 const router = express.Router();
 
@@ -71,6 +72,7 @@ router.post('/', async (req, res, next) => {
     const mediaIds = normalizeMediaIds(req.body);
     const buyerName = typeof req.body?.buyer_name === 'string' ? req.body.buyer_name.trim() : '';
     const buyerPhone = typeof req.body?.buyer_phone === 'string' ? req.body.buyer_phone.trim() : '';
+    const buyerCpf = typeof req.body?.buyer_cpf === 'string' ? req.body.buyer_cpf.replace(/\D/g, '') : '';
 
     if (!mediaIds) {
       return res.status(400).json({ error: `media_ids (lista de 1 a ${MAX_ITEMS_PER_ORDER} inteiros) é obrigatório.` });
@@ -80,6 +82,9 @@ router.post('/', async (req, res, next) => {
     }
     if (!buyerPhone || buyerPhone.replace(/\D/g, '').length < 8 || buyerPhone.length > 30) {
       return res.status(400).json({ error: 'buyer_phone é obrigatório e precisa ser um telefone válido.' });
+    }
+    if (!isValidCpf(buyerCpf)) {
+      return res.status(400).json({ error: 'buyer_cpf é obrigatório e precisa ser um CPF válido (11 dígitos).' });
     }
 
     const mediaRows = await db.all(
@@ -130,9 +135,9 @@ router.post('/', async (req, res, next) => {
     try {
       await client.query('BEGIN');
       const inserted = await client.query(
-        `INSERT INTO orders (buyer_name, buyer_phone, amount_cents, pix_code, status)
-         VALUES ($1, $2, $3, $4, 'awaiting_payment') RETURNING id, public_token`,
-        [buyerName, buyerPhone, amountCents, generated.brCode]
+        `INSERT INTO orders (buyer_name, buyer_phone, buyer_cpf, amount_cents, pix_code, status)
+         VALUES ($1, $2, $3, $4, $5, 'awaiting_payment') RETURNING id, public_token`,
+        [buyerName, buyerPhone, buyerCpf, amountCents, generated.brCode]
       );
       orderId = inserted.rows[0].id;
       publicToken = inserted.rows[0].public_token;
@@ -160,6 +165,28 @@ router.post('/', async (req, res, next) => {
       qr_code_data_url: qrCodeDataUrl,
       items: mediaRows.map((m) => ({ media_id: m.id, type: m.type, price_cents: m.price_cents })),
     });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Lista todos os pedidos de um CPF, mais recentes primeiro — permite o
+// cliente reabrir/baixar pedidos antigos mesmo sem ter guardado o link do
+// public_token, independente do nome bater exatamente. Inclui o
+// public_token de cada pedido (o front pode reusar os endpoints de proof
+// se algum ainda estiver awaiting_payment). Lista vazia não é erro.
+router.get('/by-cpf/:cpf', async (req, res, next) => {
+  try {
+    const cpf = String(req.params.cpf || '').replace(/\D/g, '');
+    if (!isValidCpf(cpf)) {
+      return res.status(400).json({ error: 'cpf inválido.' });
+    }
+    const rows = await db.all('SELECT * FROM orders WHERE buyer_cpf = $1 ORDER BY created_at DESC', [cpf]);
+    const orders = [];
+    for (const order of rows) {
+      orders.push(serializeOrder(order, await loadOrderItems(order)));
+    }
+    res.json({ orders });
   } catch (e) {
     next(e);
   }
