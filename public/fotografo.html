@@ -81,8 +81,10 @@
     <div class="card">
       <h2>Enviar fotos ou vídeos</h2>
       <form id="uploadForm">
-        <label for="file">Arquivos (JPEG, PNG, WEBP, MP4, MOV) — pode selecionar vários de uma vez</label>
-        <input id="file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime" multiple required>
+        <label for="file">Arquivos (JPEG, PNG, WEBP, MP4, MOV)</label>
+        <input id="file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime" multiple>
+        <p class="msg">Pode abrir o seletor várias vezes — os arquivos vão se somando. Enviados sem nenhuma compressão: o original vai intacto para o comprador.</p>
+        <ul id="selectedFilesList"></ul>
         <label for="eventName">Nome do evento</label>
         <input id="eventName" placeholder="ex.: Casamento Ana & Léo">
         <button type="submit" id="uploadBtn">Enviar</button>
@@ -274,6 +276,42 @@ const uploadMsg = document.getElementById('uploadMsg');
 const uploadBtn = document.getElementById('uploadBtn');
 
 const uploadList = document.getElementById('uploadList');
+const fileInput = document.getElementById('file');
+const selectedFilesList = document.getElementById('selectedFilesList');
+
+// Arquivos escolhidos vão se acumulando aqui entre aberturas do seletor
+// (o <input type="file"> por padrão substitui a seleção anterior a cada
+// abertura — ver comentário no listener de 'change' abaixo). Mesmo padrão
+// de estado de seleção usado em cliente.html (selectedMedia).
+let selectedFiles = [];
+
+function renderSelectedFilesList() {
+  selectedFilesList.innerHTML = selectedFiles.map((file, i) => `
+    <li>${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)
+      <button type="button" class="link" data-remove-index="${i}">x</button>
+    </li>
+  `).join('');
+  selectedFilesList.querySelectorAll('[data-remove-index]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      selectedFiles.splice(Number(btn.dataset.removeIndex), 1);
+      renderSelectedFilesList();
+    });
+  });
+}
+
+fileInput.addEventListener('change', (e) => {
+  const existing = new Set(selectedFiles.map((f) => f.name + f.size));
+  for (const file of Array.from(e.target.files)) {
+    if (!existing.has(file.name + file.size)) {
+      selectedFiles.push(file);
+      existing.add(file.name + file.size);
+    }
+  }
+  // Limpa o value pra permitir reabrir o diálogo e escolher mais arquivos
+  // sem perder os já acumulados (senão o navegador troca a seleção inteira).
+  e.target.value = '';
+  renderSelectedFilesList();
+});
 
 // Envia um arquivo por vez pro fluxo já existente (upload-url -> Blob ->
 // confirmação em /api/media), atualizando a linha de status dele na lista.
@@ -311,9 +349,12 @@ async function uploadOneFile(file, eventName, statusEl) {
 
 uploadForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const files = Array.from(document.getElementById('file').files);
+  const files = selectedFiles;
   const eventName = document.getElementById('eventName').value;
-  if (!files.length) return;
+  if (!files.length) {
+    showMsg(uploadMsg, 'Selecione ao menos um arquivo.', true);
+    return;
+  }
 
   uploadBtn.disabled = true;
   uploadList.innerHTML = '';
@@ -331,6 +372,8 @@ uploadForm.addEventListener('submit', async (e) => {
 
   showMsg(uploadMsg, `${okCount} de ${files.length} arquivo(s) enviados com sucesso.`, okCount < files.length);
   uploadForm.reset();
+  selectedFiles = [];
+  renderSelectedFilesList();
   uploadBtn.disabled = false;
   loadCatalog();
 });

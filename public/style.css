@@ -127,10 +127,12 @@ button.link:active { box-shadow: none; transform: none; }
 .item .price { font-weight: 700; color: #4f46e5; }
 .item .status { color: #888; font-size: .75rem; }
 .item button { width: 100%; margin-top: .5rem; padding: .4rem; font-size: .85rem; }
-#uploadList { list-style: none; padding: 0; margin: .75rem 0 0; font-size: .85rem; }
+#uploadList, #selectedFilesList { list-style: none; padding: 0; margin: .75rem 0 0; font-size: .85rem; }
 #uploadList li { padding: .25rem 0; }
 #uploadList li.ok { color: #15803d; }
 #uploadList li.error { color: #b91c1c; }
+#selectedFilesList li { padding: .25rem 0; display: flex; justify-content: space-between; gap: .5rem; }
+#selectedFilesList li button { padding: 0 .4rem; }
 .hidden { display: none !important; }
 .top-row { display: flex; justify-content: space-between; align-items: center; }
 .top-row button { margin: 0; }
