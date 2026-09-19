@@ -168,6 +168,12 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_orders_buyer_cpf ON orders(buyer_cpf);
   `);
 
+  // Supabase expõe o schema public via API REST (chave anon é pública). RLS
+  // ligado sem políticas bloqueia essa API; o app usa `pg` como postgres, que ignora RLS.
+  for (const t of ['photographers', 'media', 'media_faces', 'searches', 'search_results', 'orders', 'order_items', 'leads']) {
+    await db.query(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`);
+  }
+
   console.log('Schema Postgres criado/confirmado.');
   await db.pool.end();
 }

@@ -197,7 +197,7 @@ test('validações básicas de borda de confiança', async () => {
   const badOrder = await fetch(`${baseUrl}/api/orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ media_id: 999999, buyer_name: 'Cliente', buyer_phone: '11999998888' }),
+    body: JSON.stringify({ media_ids: [999999], buyer_name: 'Cliente', buyer_phone: '11999998888', buyer_cpf: '52998224725' }),
   });
   assert.equal(badOrder.status, 404);
 
@@ -205,7 +205,7 @@ test('validações básicas de borda de confiança', async () => {
   const badPhoneOrder = await fetch(`${baseUrl}/api/orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ media_id: 999999, buyer_name: 'Cliente', buyer_phone: '123' }),
+    body: JSON.stringify({ media_ids: [999999], buyer_name: 'Cliente', buyer_phone: '123', buyer_cpf: '52998224725' }),
   });
   assert.equal(badPhoneOrder.status, 400);
 });

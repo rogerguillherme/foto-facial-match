@@ -18,6 +18,7 @@ const pool = new Pool({
   // verificável localmente, então relaxamos a verificação (comum pra esses
   // provedores serverless — não é um Postgres com cert próprio pra validar).
   ssl: { rejectUnauthorized: false },
+  max: 3, // serverless + pooler do Supabase: poucas conexões por instância
 });
 
 async function query(sql, params = []) {
