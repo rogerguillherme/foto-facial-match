@@ -29,9 +29,17 @@ async function indexPhotoFace(mediaId, buffer) {
 async function searchBySelfie(selfieBuffer) {
   if (provider.name === 'rekognition') {
     const matches = await provider.searchBySimilarFaces(selfieBuffer, null, config.faceMatchThreshold);
-    return matches
+    const candidates = matches
       .map((m) => ({ mediaId: Number(m.externalImageId), similarity: m.similarity }))
       .filter((m) => Number.isFinite(m.mediaId));
+    if (!candidates.length) return candidates;
+    // A collection do Rekognition vive fora do banco: rostos de mídias já
+    // apagadas continuam nela e estouravam a FK de search_results. Só vale
+    // quem ainda existe no catálogo.
+    const alive = new Set(
+      (await db.all('SELECT id FROM media WHERE id = ANY($1::int[])', [candidates.map((m) => m.mediaId)])).map((r) => r.id)
+    );
+    return candidates.filter((m) => alive.has(m.mediaId));
   }
 
   const catalogFaces = await db.all('SELECT media_id, embedding_json FROM media_faces');
