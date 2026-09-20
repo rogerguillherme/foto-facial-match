@@ -113,16 +113,13 @@ selfieForm.addEventListener('submit', async (e) => {
   selectedMedia.clear();
   updateCartBar();
   try {
-    // Upload direto do navegador pro Vercel Blob: sem isso, selfies de
-    // celular passam fácil do limite de ~4.5MB de corpo de requisição da
-    // Vercel pras nossas serverless functions. `uploadPresigned` porque o
-    // Blob store deste projeto usa credenciais OIDC, sem token estático.
-    const { uploadPresigned } = await import('https://esm.sh/@vercel/blob/client');
-    const blob = await uploadPresigned(`selfies/${Date.now()}-${file.name}`, file, {
-      access: 'public', // exigido pelo SDK como checagem client-side; o store já é público
+    // Upload direto do navegador pro R2: sem isso, selfies de celular passam
+    // fácil do limite de ~4.5MB de corpo de requisição da Vercel pras nossas
+    // serverless functions.
+    const blob = await uploadToStorage(`selfies/${Date.now()}-${file.name}`, file, {
       handleUploadUrl: '/api/match/upload-url',
     });
-    const data = await api('/api/match', { method: 'POST', body: { url: blob.url, content_type: file.type } });
+    const data = await api('/api/match', { method: 'POST', body: { url: blob.url, content_type: blob.contentType } });
     showMsg(searchMsg, 'Busca concluída.', false);
     renderResults(data.results);
   } catch (err) {
@@ -300,16 +297,14 @@ function renderPixStep(order, container = checkoutBody) {
     confirmBtn.disabled = true;
     showMsg(msg, 'Enviando comprovante...', false);
     try {
-      // Mesmo motivo dos outros uploads: direto pro Blob, sem passar pelo
+      // Mesmo motivo dos outros uploads: direto pro R2, sem passar pelo
       // limite de corpo de requisição das serverless functions.
-      const { uploadPresigned } = await import('https://esm.sh/@vercel/blob/client');
-      const blob = await uploadPresigned(`proofs/${Date.now()}-${file.name}`, file, {
-        access: 'public', // exigido pelo SDK como checagem client-side; o store já é público
+      const blob = await uploadToStorage(`proofs/${Date.now()}-${file.name}`, file, {
         handleUploadUrl: `/api/orders/${order.public_token}/proof/upload-url`,
       });
       const updated = await api(`/api/orders/${order.public_token}/proof`, {
         method: 'POST',
-        body: { url: blob.url, content_type: file.type },
+        body: { url: blob.url, content_type: blob.contentType },
       });
       renderPaidStep(updated, container);
     } catch (err) {

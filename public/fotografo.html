@@ -147,18 +147,16 @@ profilePhotoForm.addEventListener('submit', async (e) => {
   profilePhotoBtn.disabled = true;
   showMsg(profilePhotoMsg, 'Enviando...', false);
   try {
-    // Mesmo fluxo de upload direto pro Blob usado no comprovante e no
+    // Mesmo fluxo de upload direto pro R2 usado no comprovante e no
     // catálogo (ver uploadOneFile abaixo) — evita o limite de corpo das
     // serverless functions.
-    const { uploadPresigned } = await import('https://esm.sh/@vercel/blob/client');
-    const blob = await uploadPresigned(`profile-photos/${Date.now()}-${file.name}`, file, {
-      access: 'public', // exigido pelo SDK como checagem client-side; o store já é público
+    const blob = await uploadToStorage(`profile-photos/${Date.now()}-${file.name}`, file, {
       handleUploadUrl: '/api/auth/profile-photo/upload-url',
       headers: { Authorization: 'Bearer ' + getToken() },
     });
     const saved = await api('/api/auth/profile-photo', {
       method: 'POST',
-      body: { url: blob.url, content_type: file.type },
+      body: { url: blob.url, content_type: blob.contentType },
       auth: true,
     });
     renderProfilePhotoPreview(null, saved.profile_photo_url);
@@ -313,28 +311,24 @@ fileInput.addEventListener('change', (e) => {
   renderSelectedFilesList();
 });
 
-// Envia um arquivo por vez pro fluxo já existente (upload-url -> Blob ->
+// Envia um arquivo por vez pro fluxo já existente (upload-url -> R2 ->
 // confirmação em /api/media), atualizando a linha de status dele na lista.
 // Nenhum endpoint novo: é só o mesmo fluxo de upload de sempre, chamado uma
 // vez por arquivo selecionado.
 async function uploadOneFile(file, eventName, statusEl) {
   statusEl.textContent = `${file.name}: enviando...`;
   try {
-    // Upload direto do navegador pro Vercel Blob: o arquivo não passa pelo
-    // corpo da nossa function (limite de ~4.5MB da Vercel), só a confirmação
-    // final com a URL do Blob passa por /api/media. `uploadPresigned` (não
-    // `upload`) porque o Blob store deste projeto usa credenciais OIDC, sem
-    // token estático — ver comentário em src/services/storage.js.
-    const { uploadPresigned } = await import('https://esm.sh/@vercel/blob/client');
-    const category = file.type.startsWith('video/') ? 'videos' : 'photos';
-    const blob = await uploadPresigned(`${category}/${Date.now()}-${file.name}`, file, {
-      access: 'public', // exigido pelo SDK como checagem client-side; o store já é público
+    // Upload direto do navegador pro R2: o arquivo não passa pelo corpo da
+    // nossa function (limite de ~4.5MB da Vercel), só a confirmação final
+    // com a URL pública passa por /api/media.
+    const category = fileType(file).startsWith('video/') ? 'videos' : 'photos';
+    const blob = await uploadToStorage(`${category}/${Date.now()}-${file.name}`, file, {
       handleUploadUrl: '/api/media/upload-url',
       headers: { Authorization: 'Bearer ' + getToken() },
     });
     await api('/api/media', {
       method: 'POST',
-      body: { url: blob.url, content_type: file.type, original_name: file.name, event_name: eventName },
+      body: { url: blob.url, content_type: blob.contentType, original_name: file.name, event_name: eventName },
       auth: true,
     });
     statusEl.textContent = `${file.name}: ok`;

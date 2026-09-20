@@ -2,27 +2,26 @@
 // nativo): sobe o app de verdade, cadastra fotógrafo, envia uma "foto",
 // manda a mesma imagem como "selfie" (deve bater ~100% no provider mock),
 // confere a listagem de resultados e o stub de compra.
-//
-// Upload é feito com o mesmo `uploadPresigned()` client-side que o navegador
-// usa (@vercel/blob/client funciona igual em Node, é só fetch por baixo) —
-// sobe de verdade pro Blob configurado em .env.local, exatamente como em
-// produção, sem o arquivo passar pelo corpo de nenhuma rota da nossa API.
 process.env.NODE_ENV = 'test';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { uploadPresigned } = require('@vercel/blob/client');
 
 const app = require('../src/app');
 
-async function uploadToBlob(pathname, buffer, contentType, handleUploadUrl, headers) {
-  const blob = await uploadPresigned(pathname, buffer, {
-    access: 'public', // exigido pelo SDK como checagem client-side; ignorado na prática pelo fluxo presigned (o store já é público)
-    contentType,
-    handleUploadUrl,
-    headers,
+// Mesmo fluxo do navegador: pede a URL pré-assinada, dá PUT direto no R2 (o
+// arquivo não passa pelo corpo de nenhuma rota da nossa API) e devolve a URL final.
+async function uploadToBlob(pathname, buffer, contentType, uploadUrlEndpoint, headers) {
+  const res = await fetch(uploadUrlEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify({ pathname, contentType, size: buffer.length }),
   });
-  return blob.url;
+  assert.equal(res.status, 200, 'upload-url deveria emitir a URL pré-assinada');
+  const { uploadUrl, url } = await res.json();
+  const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': contentType }, body: buffer });
+  assert.equal(put.status, 200, 'PUT no R2 falhou');
+  return url;
 }
 
 let server;
@@ -38,12 +37,15 @@ test.after(() => {
   server.close();
 });
 
+// JPEG 64x64 válido (o app decodifica com sharp; bytes aleatórios caem no
+// caminho de conversão HEIC e falham). O seed vai como bytes extras depois do
+// marcador de fim (FFD9), que decodificadores ignoram, pra cada foto ter
+// bytes diferentes — o provider mock só olha os bytes.
+const BASE_JPEG = Buffer.from('/9j/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCABAAEADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAT/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCWAkVAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/Z', 'base64');
 function fakeJpeg(seed) {
-  // Não precisa ser um JPEG válido de verdade: o provider mock só olha bytes,
-  // e a validação de tipo é feita pelo content_type declarado no confirm.
-  const buf = Buffer.alloc(2000);
-  for (let i = 0; i < buf.length; i++) buf[i] = (i * 7 + seed) % 256;
-  return buf;
+  const tail = Buffer.alloc(2000);
+  for (let i = 0; i < tail.length; i++) tail[i] = (i * 7 + seed) % 256;
+  return Buffer.concat([BASE_JPEG, tail]);
 }
 
 test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> compra -> comprovante -> liberado', async () => {
@@ -131,7 +133,7 @@ test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> com
   const orderRes = await fetch(`${baseUrl}/api/orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ media_id: media.id, buyer_name: 'Cliente Teste', buyer_phone: '11999998888' }),
+    body: JSON.stringify({ media_id: media.id, buyer_name: 'Cliente Teste', buyer_phone: '11999998888', buyer_cpf: '52998224725' }),
   });
   assert.equal(orderRes.status, 201);
   const order = await orderRes.json();
@@ -171,7 +173,7 @@ test('fluxo completo: cadastro -> chave pix -> upload -> busca por selfie -> com
   const secondProofUploadUrlRes = await fetch(`${baseUrl}/api/orders/${order.public_token}/proof/upload-url`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'blob.generate-presigned-url', payload: { pathname: 'proofs/de-novo.png', multipart: false, clientPayload: null } }),
+    body: JSON.stringify({ pathname: 'proofs/de-novo.png', contentType: 'image/png', size: 100 }),
   });
   assert.equal(secondProofUploadUrlRes.status, 409);
 });
@@ -189,7 +191,7 @@ test('validações básicas de borda de confiança', async () => {
   const noAuthUpload = await fetch(`${baseUrl}/api/media/upload-url`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'blob.generate-presigned-url', payload: { pathname: 'photos/x.jpg', multipart: false, clientPayload: null } }),
+    body: JSON.stringify({ pathname: 'photos/x.jpg', contentType: 'image/jpeg', size: 100 }),
   });
   assert.equal(noAuthUpload.status, 401);
 
@@ -307,7 +309,7 @@ test('pedido com várias mídias: busca por selfie encontra as duas, compra as d
   const orderRes = await fetch(`${baseUrl}/api/orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ media_ids: [mediaA.id, mediaB.id], buyer_name: 'Cliente Multi', buyer_phone: '11988887777' }),
+    body: JSON.stringify({ media_ids: [mediaA.id, mediaB.id], buyer_name: 'Cliente Multi', buyer_phone: '11988887777', buyer_cpf: '52998224725' }),
   });
   assert.equal(orderRes.status, 201);
   const order = await orderRes.json();

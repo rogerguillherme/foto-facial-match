@@ -211,7 +211,7 @@ router.get('/:token', async (req, res, next) => {
   }
 });
 
-// Emite o token de upload direto pro Blob pro comprovante (público, mas só
+// Emite o token de upload direto pro storage pro comprovante (público, mas só
 // pra um pedido existente que ainda esteja aguardando pagamento).
 router.post('/:token/proof/upload-url', async (req, res, next) => {
   try {
@@ -268,10 +268,10 @@ router.post('/:token/proof', async (req, res, next) => {
 
     const proofUrl = typeof req.body?.url === 'string' ? req.body.url : '';
     const contentType = typeof req.body?.content_type === 'string' ? req.body.content_type : '';
-    if (!proofUrl || !storage.isOwnBlobUrl(proofUrl) || !PROOF_MIME.test(contentType) ||
+    if (!proofUrl || !storage.isOwnStorageUrl(proofUrl) || !PROOF_MIME.test(contentType) ||
         !pathnameOf(proofUrl).startsWith('proofs/')) {
       return res.status(400).json({
-        error: 'url (do upload direto ao Blob) e content_type (JPEG, PNG, WEBP ou PDF) são obrigatórios e válidos.',
+        error: 'url (do upload direto ao storage) e content_type (JPEG, PNG, WEBP ou PDF) são obrigatórios e válidos.',
       });
     }
 

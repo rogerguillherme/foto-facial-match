@@ -39,7 +39,7 @@ async function loadResultsWithMedia(searchId) {
     .filter((r) => r.url);
 }
 
-// Emite o token de upload direto pro Blob pra selfie do cliente (público —
+// Emite o token de upload direto pro storage pra selfie do cliente (público —
 // mesma rota é usada por qualquer visitante, sem login).
 router.post('/upload-url', async (req, res) => {
   await storage.handleClientUpload(req, res, async (pathname) => {
@@ -60,10 +60,10 @@ router.post('/', async (req, res, next) => {
     const selfieUrl = typeof req.body?.url === 'string' ? req.body.url : '';
     const contentType = typeof req.body?.content_type === 'string' ? req.body.content_type : '';
 
-    if (!selfieUrl || !storage.isOwnBlobUrl(selfieUrl) || !ALLOWED_MIME.test(contentType) ||
+    if (!selfieUrl || !storage.isOwnStorageUrl(selfieUrl) || !ALLOWED_MIME.test(contentType) ||
         !pathnameOf(selfieUrl).startsWith('selfies/')) {
       return res.status(400).json({
-        error: 'url (do upload direto ao Blob) e content_type (JPEG, PNG ou WEBP) são obrigatórios e válidos.',
+        error: 'url (do upload direto ao storage) e content_type (JPEG, PNG ou WEBP) são obrigatórios e válidos.',
       });
     }
 

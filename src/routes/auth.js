@@ -136,7 +136,7 @@ router.put('/pricing', requirePhotographer, async (req, res, next) => {
 const ALLOWED_PROFILE_PHOTO_MIME = /^image\/(jpeg|png|webp)$/;
 const MAX_PROFILE_PHOTO_BYTES = 10 * 1024 * 1024; // 10MB
 
-// Emite o token de upload direto pro Blob pra foto de perfil do fotógrafo,
+// Emite o token de upload direto pro storage pra foto de perfil do fotógrafo,
 // mesmo padrão de POST /api/media/upload-url (ver src/routes/media.js).
 router.post('/profile-photo/upload-url', requirePhotographer, async (req, res) => {
   await storage.handleClientUpload(req, res, async (pathname) => {
@@ -157,9 +157,9 @@ router.post('/profile-photo', requirePhotographer, async (req, res, next) => {
     const blobUrl = typeof req.body?.url === 'string' ? req.body.url : '';
     const contentType = typeof req.body?.content_type === 'string' ? req.body.content_type : '';
 
-    if (!blobUrl || !storage.isOwnBlobUrl(blobUrl) || !ALLOWED_PROFILE_PHOTO_MIME.test(contentType)) {
+    if (!blobUrl || !storage.isOwnStorageUrl(blobUrl) || !ALLOWED_PROFILE_PHOTO_MIME.test(contentType)) {
       return res.status(400).json({
-        error: 'url (do upload direto ao Blob) e content_type (JPEG, PNG ou WEBP) são obrigatórios e válidos.',
+        error: 'url (do upload direto ao storage) e content_type (JPEG, PNG ou WEBP) são obrigatórios e válidos.',
       });
     }
     if (!new URL(blobUrl).pathname.slice(1).startsWith('profile-photos/')) {

@@ -19,8 +19,15 @@ module.exports = {
   // POSTGRES_URL como env var do projeto). Sem fallback pra arquivo local:
   // filesystem da Vercel é efêmero, banco tem que ser um Postgres de verdade.
   databaseUrl: process.env.DATABASE_URL || process.env.POSTGRES_URL,
-  // Injetado automaticamente pela Vercel no ambiente do projeto; usado pra
-  // validar que uma URL de mídia recebida do cliente é mesmo do nosso Blob
-  // store (ver storage.isOwnBlobUrl).
-  blobStoreId: process.env.BLOB_STORE_ID,
+  // Cloudflare R2 (API S3). publicUrl = domínio público do bucket (r2.dev ou
+  // domínio próprio), usado pra montar a URL final e validar URLs recebidas do
+  // cliente (ver storage.isOwnStorageUrl). Sem as variáveis o app sobe; só o
+  // uso do storage falha (ver getClient em src/services/storage.js).
+  r2: {
+    accountId: process.env.R2_ACCOUNT_ID,
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    bucket: process.env.R2_BUCKET,
+    publicUrl: process.env.R2_PUBLIC_URL,
+  },
 };

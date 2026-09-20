@@ -36,17 +36,18 @@ function buildWatermarkSvg(width, height, text) {
   `;
 }
 
-// Gera a versão com marca d'água a partir dos bytes originais. Mesmas
-// dimensões, sem thumbnail/resize — só a foto com o texto sobreposto,
-// recodificada em JPEG.
+// Gera a versão com marca d'água a partir dos bytes originais, reduzida pra
+// no máximo 1600px no maior lado (preview não precisa de resolução total, e
+// o original fica intacto) e recodificada em JPEG q80. rotate() aplica a
+// orientação EXIF antes de medir/redimensionar.
 async function addWatermark(buffer, text) {
-  const image = sharp(buffer);
-  const { width, height } = await image.metadata();
+  const resized = await sharp(buffer).rotate().resize(1600, 1600, { fit: 'inside', withoutEnlargement: true }).toBuffer();
+  const { width, height } = await sharp(resized).metadata();
   if (!width || !height) {
     throw new Error('Não foi possível ler as dimensões da imagem para aplicar a marca d\'água.');
   }
   const svg = buildWatermarkSvg(width, height, text);
-  return image.composite([{ input: Buffer.from(svg) }]).jpeg({ quality: 82 }).toBuffer();
+  return sharp(resized).composite([{ input: Buffer.from(svg) }]).jpeg({ quality: 80 }).toBuffer();
 }
 
 module.exports = { addWatermark };

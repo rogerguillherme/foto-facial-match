@@ -47,7 +47,7 @@ async function convertHeicIfNeeded(buffer, contentType) {
   return heicConvert({ buffer, format: 'JPEG', quality: 0.92 });
 }
 
-// Emite o token de upload direto pro Blob (o navegador do fotógrafo fala
+// Emite o token de upload direto pro storage (o navegador do fotógrafo fala
 // direto com o Blob storage a partir daqui, sem passar o arquivo pelo corpo
 // desta function — ver aviso de limite de request body no README).
 router.post('/upload-url', requirePhotographer, async (req, res) => {
@@ -80,9 +80,9 @@ router.post('/', requirePhotographer, async (req, res, next) => {
       contentType = 'image/heic';
     }
 
-    if (!blobUrl || !storage.isOwnBlobUrl(blobUrl) || !ALLOWED_MIME.test(contentType) || !originalName) {
+    if (!blobUrl || !storage.isOwnStorageUrl(blobUrl) || !ALLOWED_MIME.test(contentType) || !originalName) {
       return res.status(400).json({
-        error: 'url (do upload direto ao Blob), content_type (JPEG, PNG, WEBP, MP4 ou MOV) e original_name são obrigatórios e válidos.',
+        error: 'url (do upload direto ao storage), content_type (JPEG, PNG, WEBP, MP4 ou MOV) e original_name são obrigatórios e válidos.',
       });
     }
 
